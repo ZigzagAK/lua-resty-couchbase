@@ -68,26 +68,32 @@ local couchbase_class = {}
 
 -- request
 
-local function request(sock, body, fun)
-  assert(sock:send(body))
+local VBUCKET_MOVED = status.VBUCKET_MOVED
+
+local function request(cluster, sock, bytes, fun)
+  assert(sock:send(bytes))
   local header = handle_header(assert(sock:receive(24)))
   local body = handle_body(sock, header)
   if fun and body.value then
     body.value = fun(body.value)
   end
+  if header.status_code == VBUCKET_MOVED then
+    -- update vbucket_map on next request
+    cluster.vbuckets, cluster.servers = nil, nil
+  end
   return {
     header = header,
     body = body
-  }
+  } 
 end
 
-local function requestQ(sock, body)
-  assert(sock:send(body))
+local function requestQ(sock, bytes)
+  assert(sock:send(bytes))
   return {}
 end
 
-local function requestUntil(sock, body)
-  assert(sock:send(body))
+local function requestUntil(sock, bytes)
+  assert(sock:send(bytes))
   local t = {}
   repeat
     local header = handle_header(assert(sock:receive(24)))
@@ -133,17 +139,21 @@ local function fetch_vbuckets(cluster)
   return vBucketServerMap.vBucketMap, vBucketServerMap.serverList
 end
 
-local function update_vbucket_map(cluster, force)
-  if force or not cluster.vbuckets then 
-    cluster.vbuckets, cluster.servers = fetch_vbuckets(cluster)
-    for i, server in ipairs(cluster.servers)
-    do
-      cluster.servers[i] = { server:match("^(.+):(%d+)$") }
-    end
+local function update_vbucket_map(cluster)
+  if cluster.vbuckets then
+    return
+  end
+
+  cluster.vbuckets, cluster.servers = fetch_vbuckets(cluster)
+
+  for i, server in ipairs(cluster.servers)
+  do
+    cluster.servers[i] = { server:match("^(.+):(%d+)$") }
   end
 end
 
 local function get_vbucket_id(cluster, key)
+  update_vbucket_map(cluster)
   return cluster.VBUCKETAWARE and band(rshift(crc32(key), 16), #cluster.vbuckets - 1) or 1   
 end
 
@@ -170,7 +180,6 @@ function _M.bucket(opts)
 end
 
 function couchbase_cluster:new()
-  update_vbucket_map(self)
   return setmetatable({
     cluster = self,
     connections = {}
@@ -189,7 +198,7 @@ local function auth_sasl(sock, cluster)
     ngx.log(ngx.ERR, traceback())
     sock:close()
     return err
-  end, sock, encode(op_code.SASL_Auth, {
+  end, cluster, sock, encode(op_code.SASL_Auth, {
     key = "PLAIN",
     value = put_i8(0) .. cluster.bucket .. put_i8(0) ..  cluster.bucket_password
   })))
@@ -200,21 +209,22 @@ local function auth_sasl(sock, cluster)
 end
 
 local function connect(self, vbucket_id)
-  local host, port = get_server(self.cluster, vbucket_id)
+  local cluster = self.cluster
+  local host, port = get_server(cluster, vbucket_id)
   local cache_key = host .. ":" .. port
   local sock = self.connections[cache_key]
   if sock then
     return sock
   end
   sock = assert(tcp())
-  sock:settimeout(self.cluster.timeout)
+  sock:settimeout(cluster.timeout)
   assert(sock:connect(host, port, {
     pool = self.cluster.bucket
   }))
   if assert(sock:getreusedtimes()) == 0 then
     -- connection created
     -- sasl
-    auth_sasl(sock, self.cluster)
+    auth_sasl(sock, cluster)
   end
   self.connections[cache_key] = sock
   return sock
@@ -230,7 +240,7 @@ end
 
 local function close(self)
   foreach_v(self.connections, function(sock)
-    request(sock, encode(op_code.QuitQ, {}))
+    request(self.cluster, sock, encode(op_code.QuitQ, {}))
     sock:close()
   end)
   self.connections = {}
@@ -246,12 +256,12 @@ end
 
 function couchbase_class:noop()
   foreach_v(self.connections, function(sock)
-    request(sock, encode(op_code.Noop, {}))
+    request(self.cluster, sock, encode(op_code.Noop, {}))
   end)
 end
 
 function couchbase_class:flush()
-  return request(connect(self), encode(op_code.Flush, {}))    
+  return request(self.cluster, connect(self), encode(op_code.Flush, {}))    
 end
 
 function couchbase_class:flushQ()
@@ -260,7 +270,7 @@ end
 
 function couchbase_class:set(key, value, expire, cas)
   local vbucket_id = get_vbucket_id(self.cluster, key)
-  return request(connect(self, vbucket_id), encode(op_code.Set, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.Set, {
     key = key,
     value = value,
     expire = expire or 0,
@@ -284,7 +294,7 @@ end
 
 function couchbase_class:add(key, value, expire)
   local vbucket_id = get_vbucket_id(self.cluster, key)
-  return request(connect(self, vbucket_id), encode(op_code.Add, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.Add, {
     key = key,
     value = value,
     expire = expire or 0,
@@ -306,7 +316,7 @@ end
 
 function couchbase_class:replace(key, value, expire, cas)
   local vbucket_id = get_vbucket_id(self.cluster, key)
-  return request(connect(self, vbucket_id), encode(op_code.Replace, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.Replace, {
     key = key,
     value = value,
     expire = expire or 0,
@@ -330,7 +340,7 @@ end
 
 function couchbase_class:get(key)
   local vbucket_id = get_vbucket_id(self.cluster, key)
-  return request(connect(self, vbucket_id), encode(op_code.Get, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.Get, {
     key = key,
     vbucket_id = vbucket_id
   }))
@@ -342,7 +352,7 @@ end
 
 function couchbase_class:getK(key)
   local vbucket_id = get_vbucket_id(self.cluster, key)
-  return request(connect(self, vbucket_id), encode(op_code.GetK, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.GetK, {
     key = key,
     vbucket_id = vbucket_id
   }))
@@ -354,7 +364,7 @@ end
 
 function couchbase_class:touch(key, expire)
   local vbucket_id = get_vbucket_id(self.cluster, key)
-  return request(connect(self, vbucket_id), encode(op_code.Touch, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.Touch, {
     key = key,
     expire = expire,
     vbucket_id = vbucket_id
@@ -366,7 +376,7 @@ function couchbase_class:gat(key, expire)
     return nil, "expire required"
   end
   local vbucket_id = get_vbucket_id(self.cluster, key)
-  return request(connect(self, vbucket_id), encode(op_code.GAT, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.GAT, {
     key = key,
     expire = expire, 
     vbucket_id = vbucket_id
@@ -387,7 +397,7 @@ end
 
 function couchbase_class:delete(key, cas)
   local vbucket_id = get_vbucket_id(self.cluster, key)
-  return request(connect(self, vbucket_id), encode(op_code.Delete, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.Delete, {
     key = key,
     cas = cas,
     vbucket_id = vbucket_id
@@ -409,7 +419,7 @@ function couchbase_class:increment(key, increment, initial, expire)
                  put_i32(increment or 1) ..
                  zero_4                  ..
                  put_i32(initial or 0)
-  return request(connect(self, vbucket_id), encode(op_code.Increment, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.Increment, {
     key = key, 
     expire = expire or 0,
     extras = extras,
@@ -442,7 +452,7 @@ function couchbase_class:decrement(key, decrement, initial, expire)
                  put_i32(decrement or 1) ..
                  zero_4                  ..
                  put_i32(initial or 0)
-  return request(connect(self, vbucket_id), encode(op_code.Decrement, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.Decrement, {
     key = key, 
     expire = expire or 0,
     extras = extras,
@@ -474,7 +484,7 @@ function couchbase_class:append(key, value, cas)
     return nil, "key and value required"
   end
   local vbucket_id = get_vbucket_id(self.cluster, key)
-  return request(connect(self, vbucket_id), encode(op_code.Append, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.Append, {
     key = key,
     value = value,
     cas = cas,
@@ -500,7 +510,7 @@ function couchbase_class:prepend(key, value, cas)
     return nil, "key and value required"
   end
   local vbucket_id = get_vbucket_id(self.cluster, key)
-  return request(connect(self, vbucket_id), encode(op_code.Prepend, {
+  return request(self.cluster, connect(self, vbucket_id), encode(op_code.Prepend, {
     key = key,
     value = value,
     cas = cas,
@@ -528,14 +538,14 @@ function couchbase_class:stat(key)
 end
 
 function couchbase_class:version()
-  return request(connect(self), encode(op_code.Version, {}))
+  return request(self.cluster, connect(self), encode(op_code.Version, {}))
 end
 
 function couchbase_class:verbosity(level)
   if not level then
     return nil, "level required"
   end
-  return request(connect(self), encode(op_code.Verbosity, {
+  return request(self.cluster, connect(self), encode(op_code.Verbosity, {
     extras = put_i32(level)
   }))
 end
@@ -545,7 +555,7 @@ function couchbase_class:helo()
 end
 
 function couchbase_class:sasl_list()
-  return request(connect(self), encode(op_code.SASL_List, {}))
+  return request(self.cluster, connect(self), encode(op_code.SASL_List, {}))
 end
 
 function couchbase_class:set_vbucket()
@@ -561,7 +571,7 @@ function couchbase_class:del_vbucket()
 end
 
 function couchbase_class:list_buckets()
-  return request(connect(self), encode(op_code.List_buckets, {}))
+  return request(self.cluster, connect(self), encode(op_code.List_buckets, {}))
 end
 
 return _M
