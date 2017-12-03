@@ -181,6 +181,24 @@ end
 
 -- couchbase class
 
+local function auth_sasl(sock, cluster)
+  if not cluster.bucket_password then
+    return
+  end
+  local _, auth_result = assert(xpcall(request, function(err)
+    ngx.log(ngx.ERR, traceback())
+    sock:close()
+    return err
+  end, sock, encode(op_code.SASL_Auth, {
+    key = "PLAIN",
+    value = put_i8(0) .. cluster.bucket .. put_i8(0) ..  cluster.bucket_password
+  })))
+  if not auth_result.body or auth_result.body.value ~= "Authenticated" then
+    sock:close()
+    error("Not authenticated")
+  end
+end
+
 local function connect(self, vbucket_id)
   local host, port = get_server(self.cluster, vbucket_id)
   local cache_key = host .. ":" .. port
@@ -190,21 +208,13 @@ local function connect(self, vbucket_id)
   end
   sock = assert(tcp())
   sock:settimeout(self.cluster.timeout)
-  assert(sock:connect(host, port))
-  if assert(sock:getreusedtimes()) == 0 and self.cluster.bucket_password then
+  assert(sock:connect(host, port, {
+    pool = self.cluster.bucket
+  }))
+  if assert(sock:getreusedtimes()) == 0 then
+    -- connection created
     -- sasl
-    local resp = assert(xpcall(request, function(err)
-      ngx.log(ngx.ERR, traceback())
-      sock:close()
-      return err
-    end, encode(op_code.SASL_Auth, {
-      key = "PLAIN",
-      value = put_i8(0) .. self.cluster.bucket .. put_i8(0) ..  self.cluster.bucket_password
-    })))
-    if not resp.body or resp.body.value ~= "Authenticated" then
-      sock:close()
-      error("Not authenticated")
-    end
+    auth_sasl(sock, self.cluster)
   end
   self.connections[cache_key] = sock
   return sock
@@ -528,6 +538,30 @@ function couchbase_class:verbosity(level)
   return request(connect(self), encode(op_code.Verbosity, {
     extras = put_i32(level)
   }))
+end
+
+function couchbase_class:helo()
+  error("Unsupported")
+end
+
+function couchbase_class:sasl_list()
+  return request(connect(self), encode(op_code.SASL_List, {}))
+end
+
+function couchbase_class:set_vbucket()
+  error("Unsupported")
+end
+
+function couchbase_class:get_vbucket(key)
+  error("Unsupported")
+end
+
+function couchbase_class:del_vbucket()
+  error("Unsupported")
+end
+
+function couchbase_class:list_buckets()
+  return request(connect(self), encode(op_code.List_buckets, {}))
 end
 
 return _M

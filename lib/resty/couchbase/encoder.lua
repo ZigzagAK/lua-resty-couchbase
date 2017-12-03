@@ -92,6 +92,8 @@ function _M.encode(op, opts)
   local key, value, expire, extras, opaque, cas, vbucket_id = 
     tostring(opts.key or ""), opts.value or "", opts.expire, opts.extras or "", opts.opaque or 0, opts.cas or bytes_8, opts.vbucket_id
 
+  opaque = type(opaque) ~= "table" and put_i32(opaque) or pack_bytes(4, unpack(opaque))
+
   if #extras ~= 0 then
     if expire then
       extras = extras .. put_i32(expire)
@@ -111,7 +113,7 @@ function _M.encode(op, opts)
          put_i8(0)                       .. --      5
          put_i16(vbucket_id or 0)        .. -- h    6
          put_i32(total_length)           .. -- i    8
-         put_i32(opaque)                 .. -- i    12
+         opaque                          .. --      12
          pack_bytes(8, unpack(cas))      .. -- b8   16
          extras                          .. -- A    24
          key                             ..

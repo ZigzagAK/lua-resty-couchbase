@@ -21,24 +21,38 @@ local _M = {
 
 local couchbase = require "resty.couchbase"
 
-local cluster = couchbase.cluster {
-  bucket = "default",
+-- one bucket
+local cluster1 = couchbase.cluster {
+  bucket = "b1",
   host = "10.0.10.2",
   user = "Administrator",
-  password = "Administrator"
+  password = "Administrator",
+  bucket_password = "1111",
+  VBUCKETAWARE = true
 }
 
-function _M.set(key, value)
-  local cb = cluster:new()
+-- second bucket
+local cluster2 = couchbase.cluster {
+  bucket = "b2",
+  host = "10.0.10.2",
+  user = "Administrator",
+  password = "Administrator",
+  bucket_password = "2222",
+  VBUCKETAWARE = true
+}
+
+function _M.test_b1(key, value)
+  local cb = cluster1:new()
   local r = cb:set(key, value)
   r = cb:get(key)
   cb:setkeepalive()
   return r
 end
 
-function _M.get(key)
-  local cb = cluster:new()
-  local r = cb:get(key)
+function _M.test_b2(key, value)
+  local cb = cluster2:new()
+  local r = cb:set(key, value)
+  r = cb:get(key)
   cb:setkeepalive()
   return r
 end
@@ -51,20 +65,19 @@ return _M
 ```
 server {
   listen 4444;
-  location /set {
+  location /test_b1 {
     content_by_lua_block {
       local cb = require "cb"
       local cjson = require "cjson"
-      ngx.say(cjson.encode(cb.set(ngx.var.arg_key, ngx.var.arg_value)))
+      ngx.say(cjson.encode(cb.test_b1(ngx.var.arg_key, ngx.var.arg_value)))
     }
   }
-  location /get {
+  location /test_b2 {
     content_by_lua_block {
       local cb = require "cb"
       local cjson = require "cjson"
-      ngx.say(cjson.encode(cb.get(ngx.var.arg_key)))
+      ngx.say(cjson.encode(cb.test_b2(ngx.var.arg_key, ngx.var.arg_value)))
     }
   }
 }
 ```
-
