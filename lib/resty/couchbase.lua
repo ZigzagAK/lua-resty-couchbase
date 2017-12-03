@@ -153,7 +153,7 @@ end
 
 -- cluster class
 
-function _M.cluster(opts)
+function _M.bucket(opts)
   opts = opts or {}
   assert(opts.host and opts.user and opts.password, "host, user and password required")
 
@@ -225,7 +225,7 @@ local function setkeepalive(self)
   foreach_v(self.connections, function(sock)
     sock:setkeepalive(pool_idle, pool_size)
   end)
-  self.map = {}
+  self.connections = {}
 end
 
 local function close(self)
@@ -233,7 +233,7 @@ local function close(self)
     request(sock, encode(op_code.QuitQ, {}))
     sock:close()
   end)
-  self.map = {}
+  self.connections = {}
 end
 
 function couchbase_class:setkeepalive()

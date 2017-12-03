@@ -22,7 +22,7 @@ local _M = {
 local couchbase = require "resty.couchbase"
 
 -- one bucket
-local cluster1 = couchbase.cluster {
+local bucket1 = couchbase.bucket {
   bucket = "b1",
   host = "10.0.10.2",
   user = "Administrator",
@@ -32,7 +32,7 @@ local cluster1 = couchbase.cluster {
 }
 
 -- second bucket
-local cluster2 = couchbase.cluster {
+local bucket2 = couchbase.bucket {
   bucket = "b2",
   host = "10.0.10.2",
   user = "Administrator",
@@ -42,7 +42,7 @@ local cluster2 = couchbase.cluster {
 }
 
 function _M.test_b1(key, value)
-  local cb = cluster1:new()
+  local cb = bucket1:new()
   local r = cb:set(key, value)
   r = cb:get(key)
   cb:setkeepalive()
@@ -50,7 +50,7 @@ function _M.test_b1(key, value)
 end
 
 function _M.test_b2(key, value)
-  local cb = cluster2:new()
+  local cb = bucket2:new()
   local r = cb:set(key, value)
   r = cb:get(key)
   cb:setkeepalive()
