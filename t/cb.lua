@@ -4,26 +4,26 @@ local _M = {
 
 local couchbase = require "resty.couchbase"
 
-local bucket = couchbase.bucket {
-  bucket = "b1",
+local cluster = couchbase.cluster {
   host = "10.0.10.2",
   user = "Administrator",
-  password = "Administrator",
-  bucket_password = "1111",
+  password = "Administrator"
+}
+
+local bucket = cluster:bucket {
+  name = "b1",
+  password = "1111",
   VBUCKETAWARE = true
 }
 
-local bucket2 = couchbase.bucket {
-  bucket = "b2",
-  host = "10.0.10.2",
-  user = "Administrator",
-  password = "Administrator",
-  bucket_password = "2222",
-  VBUCKETAWARE = true
+local bucket2 = cluster:bucket {
+  name = "b2",
+  password = "2222",
+  VBUCKETAWARE = false
 }
 
 function _M.set(key, value)
-  local cb = bucket:new()
+  local cb = bucket:session()
   local r = cb:setQ(key, value)
   r = cb:getK(key)
   cb:setkeepalive()
@@ -31,7 +31,7 @@ function _M.set(key, value)
 end
 
 function _M.set2(key, value)
-  local cb = bucket2:new()
+  local cb = bucket2:session()
   local r = cb:setQ(key, value)
   r = cb:getK(key)
   cb:setkeepalive()
@@ -39,14 +39,14 @@ function _M.set2(key, value)
 end
 
 function _M.get(key)
-  local cb = bucket:new()
+  local cb = bucket:session()
   local r = cb:get(key)
   cb:setkeepalive()
   return r
 end
 
 function _M.gat(key)
-  local cb = bucket:new()
+  local cb = bucket:session()
   cb:touch(key, ngx.time() + 3600)
   local r = cb:gat(key, ngx.time() + 3600)
   cb:setkeepalive()
@@ -54,49 +54,49 @@ function _M.gat(key)
 end
 
 function _M.stat(key)
-  local cb = bucket:new()
+  local cb = bucket:session()
   local r = cb:stat(key)
   cb:setkeepalive()
   return r
 end
 
 function _M.version(key)
-  local cb = bucket:new()
+  local cb = bucket:session()
   local r = cb:version()
   cb:setkeepalive()
   return r
 end
 
 function _M.verbosity(level)
-  local cb = bucket:new()
+  local cb = bucket:session()
   local r = cb:verbosity(level)
   cb:setkeepalive()
   return r
 end
 
 function _M.incr(key)
-  local cb = bucket:new()
+  local cb = bucket:session()
   local r = cb:increment(key)
   cb:setkeepalive()
   return r
 end
 
 function _M.decr(key)
-  local cb = bucket:new()
+  local cb = bucket:session()
   local r = cb:decrement(key)
   cb:setkeepalive()
   return r
 end
 
 function _M.sasl_list()
-  local cb = bucket:new()
+  local cb = bucket:session()
   local r = cb:sasl_list(key)
   cb:setkeepalive()
   return r
 end
 
 function _M.list_buckets()
-  local cb = bucket:new()
+  local cb = bucket:session()
   local r = cb:list_buckets()
   cb:setkeepalive()
   return r

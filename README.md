@@ -21,28 +21,29 @@ local _M = {
 
 local couchbase = require "resty.couchbase"
 
--- one bucket
-local bucket1 = couchbase.bucket {
-  bucket = "b1",
+-- cluster
+local cluster = couchbase.cluster {
   host = "10.0.10.2",
   user = "Administrator",
-  password = "Administrator",
-  bucket_password = "1111",
+  password = "Administrator"
+}
+
+-- one bucket
+local bucket1 = cluster:bucket {
+  name = "b1",
+  password = "1111",
   VBUCKETAWARE = true
 }
 
 -- second bucket
-local bucket2 = couchbase.bucket {
-  bucket = "b2",
-  host = "10.0.10.2",
-  user = "Administrator",
-  password = "Administrator",
-  bucket_password = "2222",
+local bucket2 = cluster:bucket {
+  name = "b2",
+  password = "2222",
   VBUCKETAWARE = true
 }
 
 function _M.test_b1(key, value)
-  local cb = bucket1:new()
+  local cb = bucket1:session()
   local r = cb:set(key, value)
   r = cb:get(key)
   cb:setkeepalive()
@@ -50,7 +51,7 @@ function _M.test_b1(key, value)
 end
 
 function _M.test_b2(key, value)
-  local cb = bucket2:new()
+  local cb = bucket2:session()
   local r = cb:set(key, value)
   r = cb:get(key)
   cb:setkeepalive()
