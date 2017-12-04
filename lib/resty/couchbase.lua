@@ -28,7 +28,6 @@ local DEBUG, ERR = ngx.DEBUG, ngx.ERR
 local defaults = {
   port = 8091,
   timeout = 30000,
-  query_timeout = 30000,
   pool_idle = 10,
   pool_size = 10
 }
@@ -38,7 +37,6 @@ local defaults = {
 local MAGIC = c.magic
 local op_code = c.op_code
 local status = c.status
-local status_desc = c.status_desc
 
 -- extras consts
 
@@ -77,18 +75,22 @@ local VBUCKET_MOVED = status.VBUCKET_MOVED
 local function request(bucket, sock, bytes, fun)
   assert(sock:send(bytes))
   local header = handle_header(assert(sock:receive(24)))
-  local body = handle_body(sock, header)
-  if fun and body.value then
-    body.value = fun(body.value)
+  local key, value = handle_body(sock, header)
+  if fun and value then
+    value = fun(value)
   end
   if header.status_code == VBUCKET_MOVED then
     -- update vbucket_map on next request
     bucket.vbuckets, bucket.servers = nil, nil
   end
+  -- cleanup internal header values
+  header.key_length, header.extras_length, header.total_length =
+    nil, nil, nil
   return {
     header = header,
-    body = body
-  } 
+    key = key,
+    value = value
+  }
 end
 
 local function requestQ(sock, bytes)
@@ -101,12 +103,16 @@ local function requestUntil(sock, bytes)
   local t = {}
   repeat
     local header = handle_header(assert(sock:receive(24)))
-    local body = handle_body(sock, header)
+    local key, value = handle_body(sock, header)
+    -- cleanup internal header values
+    header.key_length, header.extras_length, header.total_length =
+      nil, nil, nil
     tinsert(t, {
       header = header,
-      body = body
+      key = key,
+      value = value
     })
-  until not body or not body.key
+  until not key or not value
   return t
 end
 
@@ -212,7 +218,7 @@ function couchbase_cluster:bucket(opts)
   opts.cluster = self
 
   opts.name = opts.name or "default"
-  opts.timeout = opts.query_timeout or defaults.query_timeout
+  opts.timeout = opts.timeout or defaults.timeout
   opts.pool_idle = opts.pool_idle or defaults.pool_idle
   opts.pool_size = opts.pool_size or defaults.pool_size
 
@@ -246,7 +252,7 @@ local function auth_sasl(sock, bucket)
     key = "PLAIN",
     value = put_i8(0) .. bucket.name .. put_i8(0) ..  bucket.password
   })))
-  if not auth_result.body or auth_result.body.value ~= "Authenticated" then
+  if auth_result.value ~= "Authenticated" then
     sock:close()
     error("Not authenticated")
   end

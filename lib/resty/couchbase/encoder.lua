@@ -164,11 +164,9 @@ function _M.handle_body(sock, header)
   local key    = body:sub(1 + header.extras_length, header.extras_length + header.key_length)
   local value  = body:sub(1 + header.extras_length + header.key_length)
 
-  return {
-    key = #key ~= 0 and key or nil,
-    value = #value ~= 0 and value or nil,
-    extras = #extras ~= 0 and extras or nil
-  }
+  return #key ~= 0 and key or nil,
+         #value ~= 0 and value or nil,
+         #extras ~= 0 and extras or nil
 end
 
 _M.put_i8 = put_i8
