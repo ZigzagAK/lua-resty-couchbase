@@ -66,7 +66,7 @@ local zero_4 = encoder.pack_bytes(4, 0, 0, 0, 0)
 
 local couchbase_cluster = {}
 local couchbase_bucket = {}
-local couchbase_class = {}
+local couchbase_session = {}
 
 -- request
 
@@ -81,9 +81,7 @@ local function request(bucket, sock, bytes, fun)
   end
   if header.status_code == VBUCKET_MOVED then
     -- update vbucket_map on next request
-    bucket.vbuckets, bucket.servers = nil, nil
-    -- cleanup cluster cache map
-    bucket.cluster.buckets[bucket.name] = {}
+    bucket.map.vbuckets, bucket.map.servers = nil, nil
   end
   -- cleanup internal header values
   header.key_length, header.extras_length, header.total_length =
@@ -102,20 +100,24 @@ end
 
 local function requestUntil(sock, bytes)
   assert(sock:send(bytes))
-  local t = {}
+  local list = {}
   repeat
     local header = handle_header(assert(sock:receive(24)))
     local key, value = handle_body(sock, header)
+    if header.status_code == VBUCKET_MOVED then
+      -- update vbucket_map on next request
+      bucket.map.vbuckets, bucket.map.servers = nil, nil
+    end
     -- cleanup internal header values
     header.key_length, header.extras_length, header.total_length =
       nil, nil, nil
-    tinsert(t, {
+    tinsert(list, {
       header = header,
       key = key,
       value = value
     })
   until not key or not value
-  return t
+  return list
 end
 
 -- helpers
@@ -155,20 +157,22 @@ local function fetch_vbuckets(bucket)
 
   for j, node in ipairs(json.nodes)
   do
-    assert(node.hostname,  "nodes[" .. j .. "].hostname is not found")
-    assert(node.ports,     "nodes[" .. j .. "].ports is not found")
+    assert(node.hostname,      "nodes[" .. j .. "].hostname is not found")
+    assert(node.ports,         "nodes[" .. j .. "].ports is not found")
+    assert(node.ports.direct,  "nodes[" .. j .. "].ports.direct is not found")
+    assert(node.ports.proxy,   "nodes[" .. j .. "].ports.proxy is not found")
     local hostname = node.hostname:match("^(.+):%d+$")
-    assert(hostname,       "nodes[" .. j .. "].hostname can't parse")
+    assert(hostname,           "nodes[" .. j .. "].hostname can't parse")
     ports[hostname] = { node.ports.direct, node.ports.proxy }
   end
 
   for j, server in ipairs(json.vBucketServerMap.serverList)
   do
     local hostname = server:match("^(.+):%d+$")
-    assert(hostname, "serverList[" .. j .. "]=" .. server .. " can't parse")
-    local direct_port, proxy_port = unpack(ports[hostname] or {})
-    assert(direct_port, "direct port for " .. hostname .. " is not found")
-    assert(proxy_port, "proxy port for " .. hostname .. " is not found")
+    assert(hostname,    "serverList[" .. j .. "]=" .. server .. " can't parse")
+    local node_ports = ports[hostname]
+    assert(node_ports,  "serverList[" .. j .. "]=" .. server .. " node is not found")
+    local direct_port, proxy_port = unpack(node_ports)
     json.vBucketServerMap.serverList[j] = { hostname, bucket.VBUCKETAWARE and direct_port or proxy_port }
   end
 
@@ -176,32 +180,27 @@ local function fetch_vbuckets(bucket)
 end
 
 local function update_vbucket_map(bucket)
-  if not bucket.vbuckets then
-    bucket.vbuckets, bucket.servers = fetch_vbuckets(bucket)
-    -- update cluster cache
-    bucket.cluster.buckets[bucket.name] = {
-      vbuckets = bucket.vbuckets,
-      servers = bucket.servers
-    }
+  if not bucket.map.vbuckets then
+    bucket.map.vbuckets, bucket.map.servers = fetch_vbuckets(bucket)
     ngx_log(DEBUG, "update vbucket [", bucket.name, "] VBUCKETAWARE=", (bucket.VBUCKETAWARE and "true" or "false"),
-                   " servers=", json_encode(bucket.servers))
+                   " servers=", json_encode(bucket.map.servers))
   end
 end
 
 local function get_vbucket_id(bucket, key)
   update_vbucket_map(bucket)
-  return bucket.VBUCKETAWARE and band(rshift(crc32(key), 16), #bucket.vbuckets - 1) or nil
+  return bucket.VBUCKETAWARE and band(rshift(crc32(key), 16), #bucket.map.vbuckets - 1) or nil
 end
 
 local function get_vbucket_peer(bucket, vbucket_id)
   update_vbucket_map(bucket)
-  local servers = bucket.servers
+  local servers = bucket.map.servers
   if not vbucket_id or not bucket.VBUCKETAWARE then
     -- get random
     return unpack(servers[random(1, #servers)])
   end
   -- https://developer.couchbase.com/documentation/server/3.x/developer/dev-guide-3.0/topology.html#story-h2-2
-  return unpack(servers[bucket.vbuckets[vbucket_id + 1][1] + 1])
+  return unpack(servers[bucket.map.vbuckets[vbucket_id + 1][1] + 1])
 end
 
 -- cluster class
@@ -231,14 +230,11 @@ function couchbase_cluster:bucket(opts)
   opts.pool_idle = opts.pool_idle or defaults.pool_idle
   opts.pool_size = opts.pool_size or defaults.pool_size
 
-  local bucket = self.buckets[opts.name]
-  if not bucket then
-    bucket = {}
-    self.buckets[opts.name] = bucket
+  opts.map = self.buckets[opts.name]
+  if not opts.map then
+    opts.map = {}
+    self.buckets[opts.name] = opts.map
   end
-
-  opts.vbuckets = bucket.vbuckets
-  opts.servers = bucket.servers
 
   return setmetatable(opts, {
     __index = couchbase_bucket
@@ -252,11 +248,11 @@ function couchbase_bucket:session()
     bucket = self,
     connections = {}
   }, {
-    __index = couchbase_class
+    __index = couchbase_session
   })
 end
 
--- couchbase class
+-- session class
 
 local function auth_sasl(sock, bucket)
   if not bucket.password then
@@ -279,22 +275,22 @@ end
 local function connect(self, vbucket_id)
   local bucket = self.bucket
   local host, port = get_vbucket_peer(bucket, vbucket_id)
-  local cache_key = host .. port
-  local sock = self.connections[cache_key]
+  local pool = host .. "/" .. bucket.name
+  local sock = self.connections[pool]
   if sock then
     return sock
   end
   sock = assert(tcp())
   sock:settimeout(bucket.timeout)
   assert(sock:connect(host, port, {
-    pool = bucket.name .. cache_key
+    pool = pool
   }))
   if assert(sock:getreusedtimes()) == 0 then
     -- connection created
     -- sasl
     auth_sasl(sock, bucket)
   end
-  self.connections[cache_key] = sock
+  self.connections[pool] = sock
   return sock
 end
 
@@ -314,15 +310,15 @@ local function close(self)
   self.connections = {}
 end
 
-function couchbase_class:setkeepalive()
+function couchbase_session:setkeepalive()
   setkeepalive(self)
 end
 
-function couchbase_class:close()
+function couchbase_session:close()
   close(self)
 end
 
-function couchbase_class:noop()
+function couchbase_session:noop()
   local r = {}
   foreach_v(self.connections, function(sock)
     tinsert(r, request(self.bucket, sock, encode(op_code.Noop, {})))
@@ -330,15 +326,15 @@ function couchbase_class:noop()
   return r
 end
 
-function couchbase_class:flush()
+function couchbase_session:flush()
   return request(self.bucket, connect(self), encode(op_code.Flush, {}))    
 end
 
-function couchbase_class:flushQ()
+function couchbase_session:flushQ()
   error("Unsupported")
 end
 
-function couchbase_class:set(key, value, expire, cas)
+function couchbase_session:set(key, value, expire, cas)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Set, {
     key = key,
@@ -350,7 +346,7 @@ function couchbase_class:set(key, value, expire, cas)
   }))
 end
 
-function couchbase_class:setQ(key, value, expire, cas)
+function couchbase_session:setQ(key, value, expire, cas)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return requestQ(connect(self, vbucket_id), encode(op_code.SetQ, {
     key = key,
@@ -362,7 +358,7 @@ function couchbase_class:setQ(key, value, expire, cas)
   }))
 end
 
-function couchbase_class:add(key, value, expire)
+function couchbase_session:add(key, value, expire)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Add, {
     key = key,
@@ -373,7 +369,7 @@ function couchbase_class:add(key, value, expire)
   }))
 end
 
-function couchbase_class:addQ(key, value, expire)
+function couchbase_session:addQ(key, value, expire)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return requestQ(connect(self, vbucket_id), encode(op_code.AddQ, {
     key = key,
@@ -384,7 +380,7 @@ function couchbase_class:addQ(key, value, expire)
   }))
 end
 
-function couchbase_class:replace(key, value, expire, cas)
+function couchbase_session:replace(key, value, expire, cas)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Replace, {
     key = key,
@@ -396,7 +392,7 @@ function couchbase_class:replace(key, value, expire, cas)
   }))
 end
 
-function couchbase_class:replaceQ(key, value, expire, cas)
+function couchbase_session:replaceQ(key, value, expire, cas)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return requestQ(connect(self, vbucket_id), encode(op_code.ReplaceQ, {
     key = key,
@@ -408,7 +404,7 @@ function couchbase_class:replaceQ(key, value, expire, cas)
   }))
 end 
 
-function couchbase_class:get(key)
+function couchbase_session:get(key)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Get, {
     key = key,
@@ -416,11 +412,11 @@ function couchbase_class:get(key)
   }))
 end
 
-function couchbase_class:getQ(key)
+function couchbase_session:getQ(key)
   error("Unsupported")
 end
 
-function couchbase_class:getK(key)
+function couchbase_session:getK(key)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.GetK, {
     key = key,
@@ -428,11 +424,11 @@ function couchbase_class:getK(key)
   }))
 end
 
-function couchbase_class:getKQ(key)
+function couchbase_session:getKQ(key)
   error("Unsupported")
 end
 
-function couchbase_class:touch(key, expire)
+function couchbase_session:touch(key, expire)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Touch, {
     key = key,
@@ -441,7 +437,7 @@ function couchbase_class:touch(key, expire)
   }))
 end
 
-function couchbase_class:gat(key, expire)
+function couchbase_session:gat(key, expire)
   if not expire then
     return nil, "expire required"
   end
@@ -453,15 +449,15 @@ function couchbase_class:gat(key, expire)
   }))
 end
 
-function couchbase_class:gatQ(key, expire)
+function couchbase_session:gatQ(key, expire)
   error("Unsupported")
 end
 
-function couchbase_class:gatKQ(key, expire)
+function couchbase_session:gatKQ(key, expire)
   error("Unsupported")
 end
 
-function couchbase_class:delete(key, cas)
+function couchbase_session:delete(key, cas)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Delete, {
     key = key,
@@ -470,7 +466,7 @@ function couchbase_class:delete(key, cas)
   }))
 end
 
-function couchbase_class:deleteQ(key, cas)
+function couchbase_session:deleteQ(key, cas)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return requestQ(connect(self, vbucket_id), encode(op_code.DeleteQ, {
     key = key,
@@ -479,7 +475,7 @@ function couchbase_class:deleteQ(key, cas)
   }))
 end
 
-function couchbase_class:increment(key, increment, initial, expire)
+function couchbase_session:increment(key, increment, initial, expire)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   local extras = zero_4                  ..
                  put_i32(increment or 1) ..
@@ -498,7 +494,7 @@ function couchbase_class:increment(key, increment, initial, expire)
   end)
 end 
 
-function couchbase_class:incrementQ(key, increment, initial, expire)
+function couchbase_session:incrementQ(key, increment, initial, expire)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   local extras = zero_4                  ..
                  put_i32(increment or 1) ..
@@ -512,7 +508,7 @@ function couchbase_class:incrementQ(key, increment, initial, expire)
   }))
 end 
 
-function couchbase_class:decrement(key, decrement, initial, expire)
+function couchbase_session:decrement(key, decrement, initial, expire)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   local extras = zero_4                  ..
                  put_i32(decrement or 1) ..
@@ -531,7 +527,7 @@ function couchbase_class:decrement(key, decrement, initial, expire)
   end)
 end
 
-function couchbase_class:decrementQ(key, decrement, initial, expire)
+function couchbase_session:decrementQ(key, decrement, initial, expire)
   local vbucket_id = get_vbucket_id(self.bucket, key)
   local extras = zero_4                  ..
                  put_i32(decrement or 1) ..
@@ -545,7 +541,7 @@ function couchbase_class:decrementQ(key, decrement, initial, expire)
   }))
 end
 
-function couchbase_class:append(key, value, cas)
+function couchbase_session:append(key, value, cas)
   if not key or not value then
     return nil, "key and value required"
   end
@@ -558,7 +554,7 @@ function couchbase_class:append(key, value, cas)
   }))
 end
 
-function couchbase_class:appendQ(key, value, cas)
+function couchbase_session:appendQ(key, value, cas)
   if not key or not value then
     return nil, "key and value required"
   end
@@ -571,7 +567,7 @@ function couchbase_class:appendQ(key, value, cas)
   }))
 end
 
-function couchbase_class:prepend(key, value, cas)
+function couchbase_session:prepend(key, value, cas)
   if not key or not value then
     return nil, "key and value required"
   end
@@ -584,7 +580,7 @@ function couchbase_class:prepend(key, value, cas)
   }))
 end
 
-function couchbase_class:prependQ(key, value, cas)
+function couchbase_session:prependQ(key, value, cas)
   if not key or not value then
     return nil, "key and value required"
   end
@@ -597,17 +593,17 @@ function couchbase_class:prependQ(key, value, cas)
   }))
 end
 
-function couchbase_class:stat(key)
+function couchbase_session:stat(key)
   return requestUntil(connect(self), encode(op_code.Stat, {
     key = key
   }))
 end
 
-function couchbase_class:version()
+function couchbase_session:version()
   return request(self.bucket, connect(self), encode(op_code.Version, {}))
 end
 
-function couchbase_class:verbosity(level)
+function couchbase_session:verbosity(level)
   if not level then
     return nil, "level required"
   end
@@ -616,27 +612,27 @@ function couchbase_class:verbosity(level)
   }))
 end
 
-function couchbase_class:helo()
+function couchbase_session:helo()
   error("Unsupported")
 end
 
-function couchbase_class:sasl_list()
+function couchbase_session:sasl_list()
   return request(self.bucket, connect(self), encode(op_code.SASL_List, {}))
 end
 
-function couchbase_class:set_vbucket()
+function couchbase_session:set_vbucket()
   error("Unsupported")
 end
 
-function couchbase_class:get_vbucket(key)
+function couchbase_session:get_vbucket(key)
   error("Unsupported")
 end
 
-function couchbase_class:del_vbucket()
+function couchbase_session:del_vbucket()
   error("Unsupported")
 end
 
-function couchbase_class:list_buckets()
+function couchbase_session:list_buckets()
   return request(self.bucket, connect(self), encode(op_code.List_buckets, {}))
 end
 

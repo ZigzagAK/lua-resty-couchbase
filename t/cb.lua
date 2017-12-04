@@ -5,7 +5,7 @@ local _M = {
 local couchbase = require "resty.couchbase"
 
 local cluster = couchbase.cluster {
-  host = "192.168.2.2",
+  host = "10.0.10.2",
   user = "Administrator",
   password = "Administrator"
 }
@@ -70,6 +70,13 @@ end
 
 function _M.get(key)
   local cb = bucket:session()
+  local r = cb:get(key)
+  cb:setkeepalive()
+  return r
+end
+
+function _M.get2(key)
+  local cb = bucket2:session()
   local r = cb:get(key)
   cb:setkeepalive()
   return r

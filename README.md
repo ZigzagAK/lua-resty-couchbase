@@ -13,6 +13,31 @@ Table of Contents
 * [Cluster API](#cluster_api)
 * [Bucket API](#bucket_api)
 * [Session API](#session_api)
+	* [noop](#noop)
+	* [close](#close)
+	* [setkeepalive](#setkeepalive)
+	* [set](#set)
+	* [setQ](#setq)
+	* [add](#add)
+	* [replace](#replace)
+	* [replaceQ](#replaceq)
+	* [get](#get)
+	* [getK](#getk)
+	* [touch](#touch)
+	* [gat](#gat)
+	* [delete](#delete)
+	* [deleteQ](#deleteq)
+	* [increment](#increment)
+	* [incrementQ](#incrementq)
+	* [decrement](#decrement)
+	* [decrementQ](#decrementq)
+	* [append](#append)
+	* [appendQ](#appendq)
+	* [prepend](#prepend)
+	* [prependQ](#prependq)
+	* [stat](#stat)
+	* [version](#version)
+	* [sasl_list](#sasl_list)
 
 Status
 =====
@@ -211,10 +236,11 @@ set
 
 Sets the `value` for the `key`.
 
-Optional parameter `expire` sets the TTL for key.
-Optional parameter `cas` must be a CAS value from the `get()` method.
+Optional parameter `expire` sets the TTL for key.  
+Optional parameter `cas` must be a CAS value from the `get()` method.  
 
-**return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  Status MUST be retrieved from the header.
+**return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
+Status MUST be retrieved from the header.
 
 setQ
 ----
@@ -224,8 +250,8 @@ setQ
 
 Sets the `value` for the `key`.
 
-Optional parameter `expire` sets the TTL for key.
-Optional parameter `cas` must be a CAS value from the `get()` method.
+Optional parameter `expire` sets the TTL for key.  
+Optional parameter `cas` must be a CAS value from the `get()` method.  
 
 Couchbase not sent the response on setQ command.
 
@@ -233,14 +259,16 @@ Couchbase not sent the response on setQ command.
 
 add
 ---
-**syntax:** `session:set(key, value, expire)`
+**syntax:** `session:add(key, value, expire)`
 
 **context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
 
 Add the `key` with `value`.
-Optional parameterr: `expire`.
 
-**return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error. Status MUST be retrieved from the header.
+Optional parameter `expire` sets the TTL for key.
+
+**return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
+Status MUST be retrieved from the header.
 
 addQ
 ----
@@ -264,11 +292,11 @@ replace
 
 Replace the `value` for the `key`.
 
-Optional parameter `expire` sets the TTL for key.
-Optional parameter `cas` must be a CAS value from the `get()` method.
+Optional parameter `expire` sets the TTL for key.  
+Optional parameter `cas` must be a CAS value from the `get()` method.  
 
-**return:** `{"header":{"opaque":0,"CAS":[0,164,137,158,82,69,97,51],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
-If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.
+**return:** `{"header":{"opaque":0,"CAS":[0,164,137,158,82,69,97,51],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.
+If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.  
 Status MUST be retrieved from the header.
 
 replaceQ
@@ -279,8 +307,8 @@ replaceQ
 
 Replace the `value` for the `key`.
 
-Optional parameter `expire` sets the TTL for key.
-Optional parameter `cas` must be a CAS value from the `get()` method.
+Optional parameter `expire` sets the TTL for key.  
+Optional parameter `cas` must be a CAS value from the `get()` method.  
 
 Couchbase not sent the response on replaceQ command.
 
@@ -295,7 +323,7 @@ get
 Get value for the `key`.
 
 **return:** `{"header":{"opaque":0,"CAS":[0,164,133,238,116,1,16,213],"status_code":0,"status":"No error","type":0},"value":"7"}` on success (or any valid couchbase status) or throws the error.
-If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.
+If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.  
 Status MUST be retrieved from the header.
 
 getK
@@ -306,7 +334,7 @@ getK
 
 Get value for the `key`.
 
-K-version for `get` returns the `key` in additional parameter.
+K-version for `get` returns the `key` as additional parameter.
 
 touch
 -----
@@ -315,10 +343,11 @@ touch
 **context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
 
 Get value for the `key`.
+
 Optional parameter `expire` sets the TTL for key.
 
 **return:** `{"header":{"opaque":0,"CAS":[0,164,140,177,69,146,148,224],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.
-If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.
+If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.  
 Status MUST be retrieved from the header.
 
 gat
@@ -336,10 +365,11 @@ delete
 **context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
 
 Delete the `key`.
+
 Optional parameter `cas` must be a CAS value from the `get()` method.
 
 **return:** `{"header":{"opaque":0,"CAS":[0,164,140,177,69,146,148,224],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.
-If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.
+If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.  
 Status MUST be retrieved from the header.
 
 deleteQ
@@ -349,6 +379,7 @@ deleteQ
 **context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
 
 Delete the `key`.
+
 Optional parameter `cas` must be a CAS value from the `get()` method.
 
 Couchbase not sent the response on deleteQ command.
@@ -362,12 +393,14 @@ increment
 **context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
 
 Increment value for the `key`.
+
 Optional parameter `increment` sets the increment value.
 Optional parameter `initial` sets the initial value.
 Optional parameter `expire` sets the TTL for key.
 
-**return:** `{"header":{"opaque":0,"CAS":[0,164,139,76,53,235,109,100],"status_code":0,"status":"No error","type":0},"value":213}` on success (or any valid couchbase status) or throws the error. Returns the next value.
-Status MUST be retrieved from the header.
+**return:** `{"header":{"opaque":0,"CAS":[0,164,139,76,53,235,109,100],"status_code":0,"status":"No error","type":0},"value":213}` on success (or any valid couchbase status) or throws the error.
+Returns the next value.  
+Status MUST be retrieved from the header.  
 
 incrementQ
 ---------
@@ -376,13 +409,14 @@ incrementQ
 **context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
 
 Increment value for the `key`.
-Optional parameter `increment` sets the increment value.
-Optional parameter `initial` sets the initial value.
-Optional parameter `expire` sets the TTL for key.
+
+Optional parameter `increment` sets the increment value.  
+Optional parameter `initial` sets the initial value.  
+Optional parameter `expire` sets the TTL for key.  
 
 Couchbase not sent the response on incrementQ command.
 
-**return:** `{}` on success (or any valid couchbase status) or throws the error. Returns the next value.
+**return:** `{}` on success (or any valid couchbase status) or throws the error. Returns the next value.  
 Status MUST be retrieved from the header.
 
 decrement
@@ -392,11 +426,13 @@ decrement
 **context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
 
 Decrement value for the `key`.
-Optional parameter `increment` sets the decrement value.
-Optional parameter `initial` sets the initial value.
-Optional parameter `expire` sets the TTL for key.
 
-**return:** `{"header":{"opaque":0,"CAS":[0,164,139,76,53,235,109,100],"status_code":0,"status":"No error","type":0},"value":213}` on success (or any valid couchbase status) or throws the error. Returns the next value.
+Optional parameter `increment` sets the decrement value.  
+Optional parameter `initial` sets the initial value.  
+Optional parameter `expire` sets the TTL for key.  
+
+**return:** `{"header":{"opaque":0,"CAS":[0,164,139,76,53,235,109,100],"status_code":0,"status":"No error","type":0},"value":213}` on success (or any valid couchbase status) or throws the error.
+Returns the next value.  
 Status MUST be retrieved from the header.
 
 decrementQ
@@ -406,11 +442,99 @@ decrementQ
 **context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
 
 Decrement value for the `key`.
-Optional parameter `increment` sets the decrement value.
-Optional parameter `initial` sets the initial value.
-Optional parameter `expire` sets the TTL for key.
+
+Optional parameter `increment` sets the decrement value.  
+Optional parameter `initial` sets the initial value.  
+Optional parameter `expire` sets the TTL for key.  
 
 Couchbase not sent the response on decrementQ command.
 
-**return:** `{}` on success (or any valid couchbase status) or throws the error. Returns the next value.
+**return:** `{}` on success (or any valid couchbase status) or throws the error.  
+Returns the next value.  
 Status MUST be retrieved from the header.
+
+append
+------
+**syntax:** `session:append(key, value, cas)`
+
+**context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
+
+Append the `key` with `value`.
+
+Optional parameter `cas` must be a CAS value from the `get()` method.
+
+**return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
+Status MUST be retrieved from the header.
+
+appendQ
+-------
+**syntax:** `session:appendQ(key, value, cas)`
+
+**context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
+
+Append the `key` with `value`.
+
+Optional parameter `cas` must be a CAS value from the `get()` method.
+
+Couchbase not sent the response on appendQ command.
+
+**return:** `{}` on success (or any valid couchbase status) or throws the error.
+
+prepend
+-------
+**syntax:** `session:prepend(key, value, cas)`
+
+**context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
+
+Prepend the `key` with `value`.
+
+Optional parameter `cas` must be a CAS value from the `get()` method.
+
+**return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
+Status MUST be retrieved from the header.
+
+prependQ
+--------
+**syntax:** `session:prependQ(key, value, cas)`
+
+**context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
+
+Prepend the `key` with `value`.
+
+Optional parameter `cas` must be a CAS value from the `get()` method.
+
+Couchbase not sent the response on prependQ command.
+
+**return:** `{}` on success (or any valid couchbase status) or throws the error.
+
+stat
+----
+**syntax:** `session:stat(key)`
+
+**context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
+
+Get couchbase different parameters.
+
+If the `key` parameter found, then only for `key` information will be returned.
+
+**return:** `[{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":0,"status":"No error","type":0},"key":"ep_config_file"}]` on success (or any valid couchbase status) or throws the error.
+
+version
+-------
+**syntax:** `session:version()`
+
+**context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
+
+Get couchbase version.
+
+**return:** `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":0,"status":"No error","type":0},"value":"3.1.6"}` on success (or any valid couchbase status) or throws the error.
+
+sasl_list
+---------
+**syntax:** `session:sasl_list()`
+
+**context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
+
+Get available sasl methods.
+
+**return:** `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":0,"status":"No error","type":0},"value":"CRAM-MD5 PLAIN"}` on success (or any valid couchbase status) or throws the error.
