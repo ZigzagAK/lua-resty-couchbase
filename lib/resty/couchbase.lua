@@ -13,7 +13,7 @@ local tcp = ngx.socket.tcp
 local tconcat, tinsert = table.concat, table.insert
 local assert = assert
 local pairs = pairs
-local json_decode = cjson.decode
+local json_decode, json_encode = cjson.decode, cjson.encode
 local encode_base64 = ngx.encode_base64
 local crc32 = ngx.crc32_short
 local xpcall = xpcall
@@ -22,6 +22,8 @@ local unpack = unpack
 local tostring = tostring
 local rshift, band = bit.rshift, bit.band
 local random = math.random
+local ngx_log = ngx.log
+local DEBUG, ERR = ngx.DEBUG, ngx.ERR
 
 local defaults = {
   port = 8091,
@@ -134,25 +136,42 @@ local function fetch_vbuckets(bucket)
 
   httpc:close()
 
-  local vBucketServerMap = assert(json_decode(body)).vBucketServerMap
+  local json = assert(json_decode(body))
 
-  assert(vBucketServerMap, "vBucketServerMap is not found in the response")
-  assert(vBucketServerMap.vBucketMap, "vBucketServerMap.vBucketMap is not found in the response")
-  assert(vBucketServerMap.serverList, "vBucketServerMap.serverList is not found in the response")
+  assert(json.vBucketServerMap,              "vBucketServerMap is not found")
+  assert(json.vBucketServerMap.vBucketMap,   "vBucketMap is not found")
+  assert(json.vBucketServerMap.serverList,   "serverList is not found")
+  assert(json.nodes and #json.nodes ~= 0,    "nodes array is not found or empty")
 
-  return vBucketServerMap.vBucketMap, vBucketServerMap.serverList
+  local ports = {}
+
+  for j, node in ipairs(json.nodes)
+  do
+    assert(node.hostname,  "nodes[" .. j .. "].hostname is not found")
+    assert(node.ports,     "nodes[" .. j .. "].ports is not found")
+    local hostname = node.hostname:match("^(.+):%d+$")
+    assert(hostname,       "nodes[" .. j .. "].hostname can't parse")
+    ports[hostname] = { node.ports.direct, node.ports.proxy }
+  end
+
+  for j, server in ipairs(json.vBucketServerMap.serverList)
+  do
+    local hostname = server:match("^(.+):%d+$")
+    assert(hostname, "serverList[" .. j .. "]=" .. server .. " can't parse")
+    local direct_port, proxy_port = unpack(ports[hostname] or {})
+    assert(direct_port, "direct port for " .. hostname .. " is not found")
+    assert(proxy_port, "proxy port for " .. hostname .. " is not found")
+    json.vBucketServerMap.serverList[j] = { hostname, bucket.VBUCKETAWARE and direct_port or proxy_port }
+  end
+
+  return json.vBucketServerMap.vBucketMap, json.vBucketServerMap.serverList
 end
 
 local function update_vbucket_map(bucket)
-  if bucket.vbuckets then
-    return
-  end
-
-  bucket.vbuckets, bucket.servers = fetch_vbuckets(bucket)
-
-  for i, server in ipairs(bucket.servers)
-  do
-    bucket.servers[i] = { server:match("^(.+):(%d+)$") }
+  if not bucket.vbuckets then
+    bucket.vbuckets, bucket.servers = fetch_vbuckets(bucket)
+    ngx_log(DEBUG, "update vbucket [", bucket.name, "] VBUCKETAWARE=", (bucket.VBUCKETAWARE and "true" or "false"),
+                   " servers=", json_encode(bucket.servers))
   end
 end
 
@@ -220,7 +239,7 @@ local function auth_sasl(sock, bucket)
     return
   end
   local _, auth_result = assert(xpcall(request, function(err)
-    ngx.log(ngx.ERR, traceback())
+    ngx_log(ERR, traceback())
     sock:close()
     return err
   end, bucket, sock, encode(op_code.SASL_Auth, {
@@ -303,7 +322,7 @@ function couchbase_class:set(key, value, expire, cas)
     cas = cas,
     vbucket_id = vbucket_id
   }))
-end   
+end
 
 function couchbase_class:setQ(key, value, expire, cas)
   local vbucket_id = get_vbucket_id(self.bucket, key)
@@ -315,7 +334,7 @@ function couchbase_class:setQ(key, value, expire, cas)
     cas = cas,
     vbucket_id = vbucket_id
   }))
-end   
+end
 
 function couchbase_class:add(key, value, expire)
   local vbucket_id = get_vbucket_id(self.bucket, key)
@@ -349,7 +368,7 @@ function couchbase_class:replace(key, value, expire, cas)
     cas = cas,
     vbucket_id = vbucket_id
   }))
-end 
+end
 
 function couchbase_class:replaceQ(key, value, expire, cas)
   local vbucket_id = get_vbucket_id(self.bucket, key)
