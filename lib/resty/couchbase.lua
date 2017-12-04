@@ -82,6 +82,8 @@ local function request(bucket, sock, bytes, fun)
   if header.status_code == VBUCKET_MOVED then
     -- update vbucket_map on next request
     bucket.vbuckets, bucket.servers = nil, nil
+    -- cleanup cluster cache map
+    bucket.cluster.buckets[bucket.name] = {}
   end
   -- cleanup internal header values
   header.key_length, header.extras_length, header.total_length =
@@ -140,7 +142,7 @@ local function fetch_vbuckets(bucket)
 
   local body = assert(resp:read_body())
 
-  httpc:close()
+  httpc:set_keepalive(10000, 10)
 
   local json = assert(json_decode(body))
 
@@ -176,6 +178,11 @@ end
 local function update_vbucket_map(bucket)
   if not bucket.vbuckets then
     bucket.vbuckets, bucket.servers = fetch_vbuckets(bucket)
+    -- update cluster cache
+    bucket.cluster.buckets[bucket.name] = {
+      vbuckets = bucket.vbuckets,
+      servers = bucket.servers
+    }
     ngx_log(DEBUG, "update vbucket [", bucket.name, "] VBUCKETAWARE=", (bucket.VBUCKETAWARE and "true" or "false"),
                    " servers=", json_encode(bucket.servers))
   end
@@ -183,13 +190,13 @@ end
 
 local function get_vbucket_id(bucket, key)
   update_vbucket_map(bucket)
-  return bucket.VBUCKETAWARE and band(rshift(crc32(key), 16), #bucket.vbuckets - 1) or 0
+  return bucket.VBUCKETAWARE and band(rshift(crc32(key), 16), #bucket.vbuckets - 1) or nil
 end
 
 local function get_vbucket_peer(bucket, vbucket_id)
   update_vbucket_map(bucket)
   local servers = bucket.servers
-  if not bucket.VBUCKETAWARE or 0 == (vbucket_id or 0) then
+  if not vbucket_id or not bucket.VBUCKETAWARE then
     -- get random
     return unpack(servers[random(1, #servers)])
   end
@@ -207,6 +214,8 @@ function _M.cluster(opts)
   opts.port = opts.port or defaults.port
   opts.timeout = opts.timeout or defaults.timeout
 
+  opts.buckets = {}
+
   return setmetatable(opts, {
     __index = couchbase_cluster
   })
@@ -221,6 +230,15 @@ function couchbase_cluster:bucket(opts)
   opts.timeout = opts.timeout or defaults.timeout
   opts.pool_idle = opts.pool_idle or defaults.pool_idle
   opts.pool_size = opts.pool_size or defaults.pool_size
+
+  local bucket = self.buckets[opts.name]
+  if not bucket then
+    bucket = {}
+    self.buckets[opts.name] = bucket
+  end
+
+  opts.vbuckets = bucket.vbuckets
+  opts.servers = bucket.servers
 
   return setmetatable(opts, {
     __index = couchbase_bucket
@@ -261,7 +279,7 @@ end
 local function connect(self, vbucket_id)
   local bucket = self.bucket
   local host, port = get_vbucket_peer(bucket, vbucket_id)
-  local cache_key = host .. ":" .. port
+  local cache_key = host .. port
   local sock = self.connections[cache_key]
   if sock then
     return sock
@@ -269,7 +287,7 @@ local function connect(self, vbucket_id)
   sock = assert(tcp())
   sock:settimeout(bucket.timeout)
   assert(sock:connect(host, port, {
-    pool = bucket.name
+    pool = bucket.name .. cache_key
   }))
   if assert(sock:getreusedtimes()) == 0 then
     -- connection created
@@ -290,7 +308,7 @@ end
 
 local function close(self)
   foreach_v(self.connections, function(sock)
-    request(self.bucket, sock, encode(op_code.QuitQ, {}))
+    requestQ(sock, encode(op_code.QuitQ, {}))
     sock:close()
   end)
   self.connections = {}
@@ -305,9 +323,11 @@ function couchbase_class:close()
 end
 
 function couchbase_class:noop()
+  local r = {}
   foreach_v(self.connections, function(sock)
-    request(self.bucket, sock, encode(op_code.Noop, {}))
+    tinsert(r, request(self.bucket, sock, encode(op_code.Noop, {})))
   end)
+  return r
 end
 
 function couchbase_class:flush()
@@ -434,15 +454,11 @@ function couchbase_class:gat(key, expire)
 end
 
 function couchbase_class:gatQ(key, expire)
-  if not expire then
-    return nil, "expire required"
-  end
-  local vbucket_id = get_vbucket_id(self.bucket, key)
-  return requestQ(connect(self, vbucket_id), encode(op_code.GATQ, {
-    key = key,
-    expire = expire, 
-    vbucket_id = vbucket_id
-  }))
+  error("Unsupported")
+end
+
+function couchbase_class:gatKQ(key, expire)
+  error("Unsupported")
 end
 
 function couchbase_class:delete(key, cas)

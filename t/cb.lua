@@ -13,7 +13,9 @@ local cluster = couchbase.cluster {
 local bucket = cluster:bucket {
   name = "b1",
   password = "1111",
-  VBUCKETAWARE = true
+  VBUCKETAWARE = true,
+  pool_idle = 10,
+  pool_size = 200
 }
 
 local bucket2 = cluster:bucket {
@@ -34,13 +36,34 @@ function _M.set(key, value)
   return r
 end
 
+function _M.set_perf(key, value)
+  local cb = bucket:session()
+  local r = cb:set(key, value)
+  cb:setkeepalive()
+  return r
+end
+
 function _M.set2(key, value)
   local cb = bucket2:session()
   local r = cb:set(key, value)
   if r.header.status_code ~= 0 then
     return r
   end
-  r = cb:getK(key)
+--  r = cb:getK(key)
+  cb:setkeepalive()
+  return r
+end
+
+function _M.replace(key, value)
+  local cb = bucket2:session()
+  local r = cb:replace(key, value)
+  cb:setkeepalive()
+  return r
+end
+
+function _M.touch(key, expire)
+  local cb = bucket:session()
+  local r = cb:touch(key, expire)
   cb:setkeepalive()
   return r
 end
@@ -48,6 +71,13 @@ end
 function _M.get(key)
   local cb = bucket:session()
   local r = cb:get(key)
+  cb:setkeepalive()
+  return r
+end
+
+function _M.delete(key)
+  local cb = bucket:session()
+  local r = cb:delete(key)
   cb:setkeepalive()
   return r
 end
@@ -105,6 +135,21 @@ end
 function _M.list_buckets()
   local cb = bucket:session()
   local r = cb:list_buckets()
+  cb:setkeepalive()
+  return r
+end
+
+function _M.noop()
+  local cb = bucket:session()
+  cb:sasl_list(key)
+  local r = cb:noop()
+  cb:setkeepalive()
+  return r
+end
+
+function _M.flush()
+  local cb = bucket:session()
+  local r = cb:flush()
   cb:setkeepalive()
   return r
 end
