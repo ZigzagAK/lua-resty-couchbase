@@ -5,7 +5,8 @@ local _M = {
 local couchbase = require "resty.couchbase"
 
 local cluster = couchbase.cluster {
-  host = "10.0.10.2",
+--host = "10.0.10.2",
+  host = "192.168.2.2",
   user = "Administrator",
   password = "Administrator"
 }
@@ -39,6 +40,13 @@ end
 function _M.set_perf(key, value)
   local cb = bucket:session()
   local r = cb:set(key, value)
+  cb:setkeepalive()
+  return r
+end
+
+function _M.get_perf(key)
+  local cb = bucket:session()
+  local r = cb:get(key)
   cb:setkeepalive()
   return r
 end

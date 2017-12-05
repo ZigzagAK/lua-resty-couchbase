@@ -72,20 +72,28 @@ local couchbase_session = {}
 
 local VBUCKET_MOVED = status.VBUCKET_MOVED
 
-local function request(bucket, sock, bytes, fun)
-  assert(sock:send(bytes))
-  local header = handle_header(assert(sock:receive(24)))
-  local key, value = handle_body(sock, header)
-  if fun and value then
-    value = fun(value)
-  end
-  if header.status_code == VBUCKET_MOVED then
-    -- update vbucket_map on next request
-    bucket.map.vbuckets, bucket.map.servers = nil, nil
-  end
-  -- cleanup internal header values
-  header.key_length, header.extras_length, header.total_length =
-    nil, nil, nil
+local function request(bucket, peer, bytes, fun)
+  local sock, pool = unpack(peer)
+  local header, key, value
+  assert(xpcall(function()
+    assert(sock:send(bytes))
+    header = handle_header(assert(sock:receive(24)))
+    key, value = handle_body(sock, header)
+    if fun and value then
+      value = fun(value)
+    end
+    if header.status_code == VBUCKET_MOVED then
+      -- update vbucket_map on next request
+      bucket.map.vbuckets, bucket.map.servers = nil, nil
+    end
+    -- cleanup internal header values
+    header.key_length, header.extras_length, header.total_length =  nil, nil, nil
+  end, function(err)
+    sock:close()
+    ngx_log(ERR, err, "\n", traceback())
+    bucket.connections[pool] = nil
+    return err
+  end, bucket, sock, bytes, fun))
   return {
     header = header,
     key = key,
@@ -93,30 +101,45 @@ local function request(bucket, sock, bytes, fun)
   }
 end
 
-local function requestQ(sock, bytes)
-  assert(sock:send(bytes))
+local function requestQ(peer, bytes)
+  local sock, pool = unpack(peer)
+  assert(xpcall(function()
+    sock:send(bytes)
+  end, function(err)
+    sock:close()
+    ngx_log(ERR, err, "\n", traceback())
+    bucket.connections[pool] = nil
+    return err
+  end))
   return {}
 end
 
-local function requestUntil(sock, bytes)
+local function request_until(peer, bytes)
+  local sock, pool = unpack(peer)
   assert(sock:send(bytes))
   local list = {}
-  repeat
-    local header = handle_header(assert(sock:receive(24)))
-    local key, value = handle_body(sock, header)
-    if header.status_code == VBUCKET_MOVED then
-      -- update vbucket_map on next request
-      bucket.map.vbuckets, bucket.map.servers = nil, nil
-    end
-    -- cleanup internal header values
-    header.key_length, header.extras_length, header.total_length =
-      nil, nil, nil
-    tinsert(list, {
-      header = header,
-      key = key,
-      value = value
-    })
-  until not key or not value
+  assert(xpcall(function()
+    repeat
+      local header = handle_header(assert(sock:receive(24)))
+      local key, value = handle_body(sock, header)
+      if header.status_code == VBUCKET_MOVED then
+        -- update vbucket_map on next request
+        bucket.map.vbuckets, bucket.map.servers = nil, nil
+      end
+      -- cleanup internal header values
+      header.key_length, header.extras_length, header.total_length = nil, nil, nil
+      tinsert(list, {
+        header = header,
+        key = key,
+        value = value
+      })
+    until not key or not value
+  end, function(err)
+    sock:close()
+    ngx_log(ERR, err, "\n", traceback())
+    bucket.connections[pool] = nil
+    return err
+  end))
   return list
 end
 
@@ -254,20 +277,16 @@ end
 
 -- session class
 
-local function auth_sasl(sock, bucket)
+local function auth_sasl(peer, bucket)
   if not bucket.password then
     return
   end
-  local _, auth_result = assert(xpcall(request, function(err)
-    ngx_log(ERR, traceback())
-    sock:close()
-    return err
-  end, bucket, sock, encode(op_code.SASL_Auth, {
+  local auth_resp = request(bucket, peer, encode(op_code.SASL_Auth, {
     key = "PLAIN",
     value = put_i8(0) .. bucket.name .. put_i8(0) ..  bucket.password
-  })))
-  if auth_result.value ~= "Authenticated" then
-    sock:close()
+  }))
+  if auth_resp.value ~= "Authenticated" then
+    peer[1]:close()
     error("Not authenticated")
   end
 end
@@ -278,7 +297,7 @@ local function connect(self, vbucket_id)
   local pool = host .. "/" .. bucket.name
   local sock = self.connections[pool]
   if sock then
-    return sock
+    return { sock, pool }
   end
   sock = assert(tcp())
   sock:settimeout(bucket.timeout)
@@ -288,10 +307,10 @@ local function connect(self, vbucket_id)
   if assert(sock:getreusedtimes()) == 0 then
     -- connection created
     -- sasl
-    auth_sasl(sock, bucket)
+    auth_sasl({ sock, pool }, bucket)
   end
   self.connections[pool] = sock
-  return sock
+  return { sock, pool }
 end
 
 local function setkeepalive(self)
@@ -594,7 +613,7 @@ function couchbase_session:prependQ(key, value, cas)
 end
 
 function couchbase_session:stat(key)
-  return requestUntil(connect(self), encode(op_code.Stat, {
+  return request_until(connect(self), encode(op_code.Stat, {
     key = key
   }))
 end
