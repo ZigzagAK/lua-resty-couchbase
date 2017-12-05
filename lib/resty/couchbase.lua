@@ -11,8 +11,9 @@ local encoder = require "resty.couchbase.encoder"
 
 local tcp = ngx.socket.tcp
 local tconcat, tinsert = table.concat, table.insert
-local assert = assert
-local pairs = pairs
+local setmetatable = setmetatable
+local assert, error = assert, error
+local pairs, ipairs = pairs, ipairs
 local json_decode, json_encode = cjson.decode, cjson.encode
 local encode_base64 = ngx.encode_base64
 local crc32 = ngx.crc32_short
@@ -24,6 +25,7 @@ local rshift, band = bit.rshift, bit.band
 local random = math.random
 local ngx_log = ngx.log
 local DEBUG, ERR = ngx.DEBUG, ngx.ERR
+local HTTP_OK = ngx.HTTP_OK
 
 local defaults = {
   port = 8091,
@@ -101,7 +103,7 @@ local function request(bucket, peer, bytes, fun)
   }
 end
 
-local function requestQ(peer, bytes)
+local function requestQ(bucket, peer, bytes)
   local sock, pool = unpack(peer)
   assert(xpcall(function()
     sock:send(bytes)
@@ -114,7 +116,7 @@ local function requestQ(peer, bytes)
   return {}
 end
 
-local function request_until(peer, bytes)
+local function request_until(bucket, peer, bytes)
   local sock, pool = unpack(peer)
   assert(sock:send(bytes))
   local list = {}
@@ -163,7 +165,7 @@ local function fetch_vbuckets(bucket)
     }
   })
 
-  assert(resp.status == ngx.HTTP_OK, "Unauthorized")
+  assert(resp.status == HTTP_OK, "Unauthorized")
 
   local body = assert(resp:read_body())
 
@@ -323,7 +325,7 @@ end
 
 local function close(self)
   foreach_v(self.connections, function(sock)
-    requestQ(sock, encode(op_code.QuitQ, {}))
+    requestQ(self, sock, encode(op_code.QuitQ, {}))
     sock:close()
   end)
   self.connections = {}
@@ -367,7 +369,7 @@ end
 
 function couchbase_session:setQ(key, value, expire, cas)
   local vbucket_id = get_vbucket_id(self.bucket, key)
-  return requestQ(connect(self, vbucket_id), encode(op_code.SetQ, {
+  return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.SetQ, {
     key = key,
     value = value,
     expire = expire or 0,
@@ -390,7 +392,7 @@ end
 
 function couchbase_session:addQ(key, value, expire)
   local vbucket_id = get_vbucket_id(self.bucket, key)
-  return requestQ(connect(self, vbucket_id), encode(op_code.AddQ, {
+  return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.AddQ, {
     key = key,
     value = value,
     expire = expire or 0,
@@ -413,7 +415,7 @@ end
 
 function couchbase_session:replaceQ(key, value, expire, cas)
   local vbucket_id = get_vbucket_id(self.bucket, key)
-  return requestQ(connect(self, vbucket_id), encode(op_code.ReplaceQ, {
+  return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.ReplaceQ, {
     key = key,
     value = value,
     expire = expire or 0,
@@ -487,7 +489,7 @@ end
 
 function couchbase_session:deleteQ(key, cas)
   local vbucket_id = get_vbucket_id(self.bucket, key)
-  return requestQ(connect(self, vbucket_id), encode(op_code.DeleteQ, {
+  return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.DeleteQ, {
     key = key,
     cas = cas,
     vbucket_id = vbucket_id
@@ -519,7 +521,7 @@ function couchbase_session:incrementQ(key, increment, initial, expire)
                  put_i32(increment or 1) ..
                  zero_4                  ..
                  put_i32(initial or 0)
-  return requestQ(connect(self, vbucket_id), encode(op_code.IncrementQ, {
+  return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.IncrementQ, {
     key = key, 
     expire = expire or 0,
     extras = extras,
@@ -552,7 +554,7 @@ function couchbase_session:decrementQ(key, decrement, initial, expire)
                  put_i32(decrement or 1) ..
                  zero_4                  ..
                  put_i32(initial or 0)
-  return requestQ(connect(self, vbucket_id), encode(op_code.DecrementQ, {
+  return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.DecrementQ, {
     key = key, 
     expire = expire or 0,
     extras = extras,
@@ -578,7 +580,7 @@ function couchbase_session:appendQ(key, value, cas)
     return nil, "key and value required"
   end
   local vbucket_id = get_vbucket_id(self.bucket, key)
-  return requestQ(connect(self, vbucket_id), encode(op_code.AppendQ, {
+  return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.AppendQ, {
     key = key,
     value = value,
     cas = cas,
@@ -604,7 +606,7 @@ function couchbase_session:prependQ(key, value, cas)
     return nil, "key and value required"
   end
   local vbucket_id = get_vbucket_id(self.bucket, key)
-  return requestQ(connect(self, vbucket_id), encode(op_code.PrependQ, {
+  return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.PrependQ, {
     key = key,
     value = value,
     cas = cas,
@@ -613,7 +615,7 @@ function couchbase_session:prependQ(key, value, cas)
 end
 
 function couchbase_session:stat(key)
-  return request_until(connect(self), encode(op_code.Stat, {
+  return request_until(self.bucket, connect(self), encode(op_code.Stat, {
     key = key
   }))
 end
