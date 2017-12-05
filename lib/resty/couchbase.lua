@@ -154,14 +154,18 @@ local function fetch_vbuckets(bucket)
 
   httpc:set_timeout(cluster.timeout)
 
-  assert(httpc:connect(cluster.host, cluster.port))
+  if cluster.socket then
+    assert(httpc:connect(cluster.socket))
+  else
+    assert(httpc:connect(cluster.host, cluster.port))
+  end
 
   local resp = assert(httpc:request {
     path = "/pools/default/buckets/" .. bucket.name,
     headers = {
       Authorization = "Basic " .. encode_base64(cluster.user .. ":" .. cluster.password),
       Accept = "application/json",
-      Host = cluster.host .. ":" .. cluster.port
+      Host = cluster.socket and "couchbase" or cluster.host .. ":" .. cluster.port
     }
   })
 
@@ -233,7 +237,7 @@ end
 function _M.cluster(opts)
   opts = opts or {}
 
-  assert(opts.host and opts.user and opts.password, "host, user and password required")
+  assert((opts.host or opts.socket) and opts.user and opts.password, "host, user and password required")
 
   opts.port = opts.port or defaults.port
   opts.timeout = opts.timeout or defaults.timeout
