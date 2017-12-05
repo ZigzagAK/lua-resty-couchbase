@@ -74,13 +74,16 @@ local couchbase_session = {}
 
 local VBUCKET_MOVED = status.VBUCKET_MOVED
 
-local function request(bucket, peer, bytes, fun)
+local function request(bucket, peer, packet, fun)
   local sock, pool = unpack(peer)
   local header, key, value
+  local bytes, opaque = unpack(packet)
   assert(xpcall(function()
     assert(sock:send(bytes))
-    header = handle_header(assert(sock:receive(24)))
-    key, value = handle_body(sock, header)
+    repeat
+      header = handle_header(assert(sock:receive(24)))
+      key, value = handle_body(sock, header)
+    until header.opaque == opaque
     if fun and value then
       value = fun(value)
     end
@@ -103,9 +106,9 @@ local function request(bucket, peer, bytes, fun)
   }
 end
 
-local function requestQ(bucket, peer, bytes)
-  error("Temporary unsupported")
+local function requestQ(bucket, peer, packet)
   local sock, pool = unpack(peer)
+  local bytes = unpack(packet)
   assert(xpcall(function()
     sock:send(bytes)
   end, function(err)
@@ -117,14 +120,18 @@ local function requestQ(bucket, peer, bytes)
   return {}
 end
 
-local function request_until(bucket, peer, bytes)
+local function request_until(bucket, peer, packet)
   local sock, pool = unpack(peer)
+  local bytes, opaque = unpack(packet)
   assert(sock:send(bytes))
   local list = {}
   assert(xpcall(function()
     repeat
-      local header = handle_header(assert(sock:receive(24)))
-      local key, value = handle_body(sock, header)
+      local header, key, value
+      repeat
+        header = handle_header(assert(sock:receive(24)))
+        key, value = handle_body(sock, header)
+      until header.opaque == opaque
       if header.status_code == VBUCKET_MOVED then
         -- update vbucket_map on next request
         bucket.map.vbuckets, bucket.map.servers = nil, nil

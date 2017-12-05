@@ -12,6 +12,9 @@ local lshift, rshift, band, bor = bit.lshift, bit.rshift, bit.band, bit.bor
 local char, byte = string.char, string.byte
 local unpack = unpack
 local tostring = tostring
+local random = math.random
+local type = type
+local ipairs = ipairs
 
 local c
 
@@ -90,9 +93,9 @@ local bytes_8 = { 0, 0, 0, 0, 0, 0, 0, 0 }
 
 function _M.encode(op, opts)
   local key, value, expire, extras, opaque, cas, vbucket_id = 
-    tostring(opts.key or ""), opts.value or "", opts.expire, opts.extras or "", opts.opaque or 0, opts.cas or bytes_8, opts.vbucket_id or 0
+    tostring(opts.key or ""), opts.value or "", opts.expire, opts.extras or "", opts.opaque or random(1, 0x7FFFFFFF), opts.cas or bytes_8, opts.vbucket_id or 0
 
-  opaque = type(opaque) ~= "table" and put_i32(opaque) or pack_bytes(4, unpack(opaque))
+  local opaque_bin = type(opaque) ~= "table" and put_i32(opaque) or pack_bytes(4, unpack(opaque))
 
   if #extras ~= 0 then
     if expire then
@@ -106,18 +109,19 @@ function _M.encode(op, opts)
 
   local total_length = #key + #value + #extras
 
-  return put_i8(MAGIC.CLI_REQ)           .. -- b2   0
-         put_i8(op)                      .. --      1
-         put_i16(#key)                   .. -- h    2
-         put_i8(#extras)                 .. -- b2   4
-         put_i8(0)                       .. --      5
-         put_i16(vbucket_id or 0)        .. -- h    6
-         put_i32(total_length)           .. -- i    8
-         opaque                          .. --      12
-         pack_bytes(8, unpack(cas))      .. -- b8   16
-         extras                          .. -- A    24
-         key                             ..
-         value
+  return { put_i8(MAGIC.CLI_REQ)           .. -- b2   0
+           put_i8(op)                      .. --      1
+           put_i16(#key)                   .. -- h    2
+           put_i8(#extras)                 .. -- b2   4
+           put_i8(0)                       .. --      5
+           put_i16(vbucket_id or 0)        .. -- h    6
+           put_i32(total_length)           .. -- i    8
+           opaque_bin                      .. --      12
+           pack_bytes(8, unpack(cas))      .. -- b8   16
+           extras                          .. -- A    24
+           key                             ..
+           value,
+           opaque }
 end
 
 function _M.handle_header(hdr)
