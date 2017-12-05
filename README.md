@@ -17,27 +17,49 @@ Table of Contents
 	* [close](#close)
 	* [setkeepalive](#setkeepalive)
 	* [set](#set)
-	* [setQ](#setq)
 	* [add](#add)
 	* [replace](#replace)
-	* [replaceQ](#replaceq)
 	* [get](#get)
 	* [getK](#getk)
 	* [touch](#touch)
 	* [gat](#gat)
 	* [delete](#delete)
-	* [deleteQ](#deleteq)
 	* [increment](#increment)
-	* [incrementQ](#incrementq)
 	* [decrement](#decrement)
-	* [decrementQ](#decrementq)
 	* [append](#append)
-	* [appendQ](#appendq)
 	* [prepend](#prepend)
-	* [prependQ](#prependq)
 	* [stat](#stat)
 	* [version](#version)
 	* [sasl_list](#sasl_list)
+
+<!--
+* [Session API](#session_api)
+    * [noop](#noop)
+    * [close](#close)
+    * [setkeepalive](#setkeepalive)
+    * [set](#set)
+    * [setQ](#setq)
+    * [add](#add)
+    * [replace](#replace)
+    * [replaceQ](#replaceq)
+    * [get](#get)
+    * [getK](#getk)
+    * [touch](#touch)
+    * [gat](#gat)
+    * [delete](#delete)
+    * [deleteQ](#deleteq)
+    * [increment](#increment)
+    * [incrementQ](#incrementq)
+    * [decrement](#decrement)
+    * [decrementQ](#decrementq)
+    * [append](#append)
+    * [appendQ](#appendq)
+    * [prepend](#prepend)
+    * [prependQ](#prependq)
+    * [stat](#stat)
+    * [version](#version)
+    * [sasl_list](#sasl_list)
+-->
 
 Status
 =====
@@ -242,6 +264,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 **return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
 Status MUST be retrieved from the header.
 
+<!--
 setQ
 ----
 **syntax:** `session:setQ(key, value, expire, cas)`
@@ -256,6 +279,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 Couchbase not sent the response on setQ command.
 
 **return:** `{}` on success (or any valid couchbase status) or throws the error.
+-->
 
 add
 ---
@@ -270,6 +294,7 @@ Optional parameter `expire` sets the TTL for key.
 **return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
 Status MUST be retrieved from the header.
 
+<!--
 addQ
 ----
 **syntax:** `session:addQ(key, value, expire)`
@@ -283,6 +308,7 @@ Optional parameter `expire` sets the TTL for key.
 Couchbase not sent the response on addQ command.
 
 **return:** `{}` on success (or any valid couchbase status) or throws the error.
+-->
 
 replace
 -------
@@ -299,6 +325,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.  
 Status MUST be retrieved from the header.
 
+<!--
 replaceQ
 --------
 **syntax:** `session:replaceQ(key, value, expire, cas)`
@@ -313,6 +340,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 Couchbase not sent the response on replaceQ command.
 
 **return:** `{}` on success (or any valid couchbase status) or throws the error.
+-->
 
 get
 ---
@@ -372,6 +400,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.  
 Status MUST be retrieved from the header.
 
+<!--
 deleteQ
 -------
 **syntax:** `session:deleteQ(delete, cas)`
@@ -385,6 +414,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 Couchbase not sent the response on deleteQ command.
 
 **return:** `{}` on success (or any valid couchbase status) or throws the error.
+-->
 
 increment
 ---------
@@ -402,8 +432,9 @@ Optional parameter `expire` sets the TTL for key.
 Returns the next value.  
 Status MUST be retrieved from the header.  
 
+<!--
 incrementQ
----------
+----------
 **syntax:** `session:incrementQ(key, increment, initial, expire)`
 
 **context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
@@ -418,9 +449,10 @@ Couchbase not sent the response on incrementQ command.
 
 **return:** `{}` on success (or any valid couchbase status) or throws the error. Returns the next value.  
 Status MUST be retrieved from the header.
+-->
 
 decrement
-----------
+---------
 **syntax:** `session:decrement(key, increment, initial, expire)`
 
 **context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
@@ -435,8 +467,9 @@ Optional parameter `expire` sets the TTL for key.
 Returns the next value.  
 Status MUST be retrieved from the header.
 
+<!--
 decrementQ
------------
+----------
 **syntax:** `session:decrementQ(key, increment, initial, expire)`
 
 **context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
@@ -452,6 +485,7 @@ Couchbase not sent the response on decrementQ command.
 **return:** `{}` on success (or any valid couchbase status) or throws the error.  
 Returns the next value.  
 Status MUST be retrieved from the header.
+-->
 
 append
 ------
@@ -466,6 +500,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 **return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
 Status MUST be retrieved from the header.
 
+<!--
 appendQ
 -------
 **syntax:** `session:appendQ(key, value, cas)`
@@ -479,6 +514,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 Couchbase not sent the response on appendQ command.
 
 **return:** `{}` on success (or any valid couchbase status) or throws the error.
+-->
 
 prepend
 -------
@@ -493,6 +529,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 **return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
 Status MUST be retrieved from the header.
 
+<!--
 prependQ
 --------
 **syntax:** `session:prependQ(key, value, cas)`
@@ -506,6 +543,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 Couchbase not sent the response on prependQ command.
 
 **return:** `{}` on success (or any valid couchbase status) or throws the error.
+-->
 
 stat
 ----

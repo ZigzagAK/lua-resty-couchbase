@@ -104,6 +104,7 @@ local function request(bucket, peer, bytes, fun)
 end
 
 local function requestQ(bucket, peer, bytes)
+  error("Temporary unsupported")
   local sock, pool = unpack(peer)
   assert(xpcall(function()
     sock:send(bytes)
