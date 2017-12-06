@@ -726,6 +726,8 @@ end
 function couchbase_session:receive(peer, opts)
   assert(peer, "peer required")
 
+  opts = opts or {}
+
   local opaque, limit = opts.opaque, opts.limit
   local req = create_request(self.bucket, peer)
 

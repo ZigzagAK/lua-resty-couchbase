@@ -278,7 +278,7 @@ Couchbase not sent the response on setQ command.
   end
 ```
 
-**return:** `{}` on success (or any valid couchbase status) or throws the error.
+**return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success or throws the error.
 
 add
 ---
@@ -582,7 +582,7 @@ Parameters `op` must be a constant.
   ...
 
   local w = session:send(c.op_code.Set, {
-    key = 88, value = 1234567890
+    key = 88, value = 1234567890, expire = 0
   })
 
   local l = session:receive(w.peer, {
@@ -611,7 +611,7 @@ Parameters `op` must be a constant.
   do
     local key, value = unpack(req)
     local w = session:send(c.op_code.SetQ, {
-      key = key, value = value
+      key = key, value = value, expire = 0
     })
     local peer, opaque = w.peer, w.header.opaque
     peers[peer] = true
