@@ -13,31 +13,6 @@ Table of Contents
 * [Cluster API](#cluster_api)
 * [Bucket API](#bucket_api)
 * [Session API](#session_api)
-	* [noop](#noop)
-	* [close](#close)
-	* [setkeepalive](#setkeepalive)
-	* [set](#set)
-	* [add](#add)
-	* [replace](#replace)
-	* [get](#get)
-	* [getK](#getk)
-	* [touch](#touch)
-	* [gat](#gat)
-	* [delete](#delete)
-	* [increment](#increment)
-	* [decrement](#decrement)
-	* [append](#append)
-	* [prepend](#prepend)
-	* [stat](#stat)
-	* [version](#version)
-	* [sasl_list](#sasl_list)
-* [Async API](#async_api)
-    * [send](#send)
-    * [receive](#receive)
-    * [batch](#receive)
-
-<!--
-* [Session API](#session_api)
     * [noop](#noop)
     * [close](#close)
     * [setkeepalive](#setkeepalive)
@@ -63,7 +38,10 @@ Table of Contents
     * [stat](#stat)
     * [version](#version)
     * [sasl_list](#sasl_list)
--->
+* [Async API](#async_api)
+    * [send](#send)
+    * [receive](#receive)
+    * [batch](#receive)
 
 Status
 =====
@@ -268,7 +246,6 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 **return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
 Status MUST be retrieved from the header.
 
-<!--
 setQ
 ----
 **syntax:** `session:setQ(key, value, expire, cas)`
@@ -282,8 +259,26 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 
 Couchbase not sent the response on setQ command.
 
+**Example:**
+```
+  local peers = {}
+
+  for i=1,n
+  do
+    local w = session:setQ(key, "xxxxxxxxxxxxxxx")
+    local peer, opaque = w.peer, w.header.opaque
+    peers[peer] = true
+  end
+
+  -- wait responses (only errors)
+
+  for peer in pairs(peers)
+  do
+    cb:receive(peer)
+  end
+```
+
 **return:** `{}` on success (or any valid couchbase status) or throws the error.
--->
 
 add
 ---
@@ -298,7 +293,6 @@ Optional parameter `expire` sets the TTL for key.
 **return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
 Status MUST be retrieved from the header.
 
-<!--
 addQ
 ----
 **syntax:** `session:addQ(key, value, expire)`
@@ -311,8 +305,7 @@ Optional parameter `expire` sets the TTL for key.
 
 Couchbase not sent the response on addQ command.
 
-**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.
--->
+**return:** `{"peer":{"sock":userdata,"pool":"addr/bucket"},"header":{"opaque":2142342}}` on success or throws the error.
 
 replace
 -------
@@ -329,7 +322,6 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.  
 Status MUST be retrieved from the header.
 
-<!--
 replaceQ
 --------
 **syntax:** `session:replaceQ(key, value, expire, cas)`
@@ -343,8 +335,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 
 Couchbase not sent the response on replaceQ command.
 
-**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.
--->
+**return:** `{"peer":{"sock":userdata,"pool":"addr/bucket"},"header":{"opaque":2142342}}` on success or throws the error.
 
 get
 ---
@@ -404,7 +395,6 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 If key is not exists `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":1,"status":"Key not found","type":0},"value":"Not found"}`.  
 Status MUST be retrieved from the header.
 
-<!--
 deleteQ
 -------
 **syntax:** `session:deleteQ(delete, cas)`
@@ -417,8 +407,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 
 Couchbase not sent the response on deleteQ command.
 
-**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.
--->
+**return:** `{"peer":{"sock":userdata,"pool":"addr/bucket"},"header":{"opaque":2142342}}` on success or throws the error.
 
 increment
 ---------
@@ -436,7 +425,6 @@ Optional parameter `expire` sets the TTL for key.
 Returns the next value.  
 Status MUST be retrieved from the header.  
 
-<!--
 incrementQ
 ----------
 **syntax:** `session:incrementQ(key, increment, initial, expire)`
@@ -451,9 +439,8 @@ Optional parameter `expire` sets the TTL for key.
 
 Couchbase not sent the response on incrementQ command.
 
-**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error. Returns the next value.  
+**return:** `{"peer":{"sock":userdata,"pool":"addr/bucket"},"header":{"opaque":2142342}}` on success or throws the error.
 Status MUST be retrieved from the header.
--->
 
 decrement
 ---------
@@ -471,7 +458,6 @@ Optional parameter `expire` sets the TTL for key.
 Returns the next value.  
 Status MUST be retrieved from the header.
 
-<!--
 decrementQ
 ----------
 **syntax:** `session:decrementQ(key, increment, initial, expire)`
@@ -486,10 +472,9 @@ Optional parameter `expire` sets the TTL for key.
 
 Couchbase not sent the response on decrementQ command.
 
-**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.  
+**return:** `{"peer":{"sock":userdata,"pool":"addr/bucket"},"header":{"opaque":2142342}}` on success or throws the error.  
 Returns the next value.  
 Status MUST be retrieved from the header.
--->
 
 append
 ------
@@ -504,7 +489,6 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 **return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
 Status MUST be retrieved from the header.
 
-<!--
 appendQ
 -------
 **syntax:** `session:appendQ(key, value, cas)`
@@ -517,8 +501,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 
 Couchbase not sent the response on appendQ command.
 
-**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.
--->
+**return:** `{"peer":{"sock":userdata,"pool":"addr/bucket"},"header":{"opaque":2142342}}` on success or throws the error.
 
 prepend
 -------
@@ -533,7 +516,6 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 **return:** `{"header":{"opaque":0,"CAS":[0,164,136,177,61,99,242,140],"status_code":0,"status":"No error","type":0}}` on success (or any valid couchbase status) or throws the error.  
 Status MUST be retrieved from the header.
 
-<!--
 prependQ
 --------
 **syntax:** `session:prependQ(key, value, cas)`
@@ -546,8 +528,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 
 Couchbase not sent the response on prependQ command.
 
-**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.
--->
+**return:** `{"peer":{"sock":userdata,"pool":"addr/bucket"},"header":{"opaque":2142342}}` on success or throws the error.
 
 stat
 ----
@@ -618,9 +599,9 @@ Parameters `op` must be a constant.
   ...
 
   local batch = {
-    { 77, "1234567890" },
-    { 88, "1234567890" },
-    { 99, "1234567890" }
+    { 77, "1234567890", expire = 0 },
+    { 88, "1234567890", expire = 0 },
+    { 99, "1234567890", expire = 0 }
   }
 
   local peers = {}
@@ -641,7 +622,7 @@ Parameters `op` must be a constant.
 
   for peer in pairs(peers)
   do
-    local fails = session:receive(w.peer)
+    local fails = session:receive(peer)
     for _,fail in ipairs(fails)
     do
       local header, key, value = fail.header, fail.key, fail.value
