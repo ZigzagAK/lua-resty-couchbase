@@ -93,7 +93,7 @@ local bytes_8 = { 0, 0, 0, 0, 0, 0, 0, 0 }
 
 function _M.encode(op, opts)
   local key, value, expire, extras, opaque, cas, vbucket_id = 
-    tostring(opts.key or ""), opts.value or "", opts.expire, opts.extras or "", opts.opaque or random(1, 0x7FFFFFFF), opts.cas or bytes_8, opts.vbucket_id or 0
+    tostring(opts.key or ""), opts.value or "", opts.expire, opts.extras or "", opts.opaque or random(2, 0x7FFFFFFF), opts.cas or bytes_8, opts.vbucket_id or 0
 
   local opaque_bin = type(opaque) ~= "table" and put_i32(opaque) or pack_bytes(4, unpack(opaque))
 

@@ -10,7 +10,7 @@ local c = require "resty.couchbase.consts"
 local encoder = require "resty.couchbase.encoder"
 
 local tcp = ngx.socket.tcp
-local tconcat, tinsert = table.concat, table.insert
+local tconcat, tinsert, tremove = table.concat, table.insert, table.remove
 local setmetatable = setmetatable
 local assert, error = assert, error
 local pairs, ipairs = pairs, ipairs
@@ -19,6 +19,7 @@ local encode_base64 = ngx.encode_base64
 local crc32 = ngx.crc32_short
 local xpcall = xpcall
 local traceback = debug.traceback
+local thread_spawn, thread_wait = ngx.thread.spawn, ngx.thread.wait
 local unpack = unpack
 local tostring = tostring
 local rshift, band = bit.rshift, bit.band
@@ -40,10 +41,6 @@ local MAGIC = c.magic
 local op_code = c.op_code
 local status = c.status
 
--- extras consts
-
-local deadbeef = c.deadbeef
-
 -- encoder
 
 local encode = encoder.encode
@@ -62,6 +59,10 @@ local function foreach_v(tab, f)
   for _,v in pairs(tab) do f(v) end
 end
 
+local function foreachi(tab, f)
+  for _,v in ipairs(tab) do f(v) end
+end
+
 local zero_4 = encoder.pack_bytes(4, 0, 0, 0, 0)
 
 -- class tables
@@ -74,82 +75,106 @@ local couchbase_session = {}
 
 local VBUCKET_MOVED = status.VBUCKET_MOVED
 
-local function request(bucket, peer, packet, fun)
+local request_class = {}
+
+local function create_request(bucket, peer)
   local sock, pool = unpack(peer)
+  return setmetatable({
+    bucket = bucket,
+    sock = sock,
+    pool = pool,
+    unknown = {}
+  }, { __index = request_class })
+end
+
+function request_class:get_unknown()
+  return self.unknown
+end
+
+function request_class:receive(opaque, limit)
   local header, key, value
+  assert(xpcall(function()
+    local j, incr = 0, limit and 1 or 0
+    while j < (limit or 1)
+    do
+      header = handle_header(assert(self.sock:receive(24)))
+      key, value = handle_body(self.sock, header)
+      if header.status_code == VBUCKET_MOVED then
+        -- update vbucket_map on next request
+        self.bucket.map.vbuckets, self.bucket.map.servers = nil, nil
+        error(header.status)
+      end
+      -- cleanup internal header values
+      header.key_length, header.extras_length, header.total_length =  nil, nil, nil
+      if opaque and header.opaque ~= opaque then
+        self.unknown[header.opaque] = { header = header, key = key, value = value }
+      end
+      if opaque and header.opaque == opaque then
+        break
+      end
+      j = j + incr
+    end
+  end, function(err)
+    self.sock:close()
+    ngx_log(ERR, err, "\n", traceback())
+    self.bucket.connections[self.pool] = nil
+    return err
+  end))
+  return header, key, value
+end
+
+function request_class:sync(limit)
+  self:receive(self:send(encode(op_code.Noop, {})), limit)
+end
+
+function request_class:send(packet)
   local bytes, opaque = unpack(packet)
   assert(xpcall(function()
-    assert(sock:send(bytes))
-    repeat
-      header = handle_header(assert(sock:receive(24)))
-      key, value = handle_body(sock, header)
-    until header.opaque == opaque
-    if fun and value then
-      value = fun(value)
-    end
-    if header.status_code == VBUCKET_MOVED then
-      -- update vbucket_map on next request
-      bucket.map.vbuckets, bucket.map.servers = nil, nil
-    end
-    -- cleanup internal header values
-    header.key_length, header.extras_length, header.total_length =  nil, nil, nil
+    assert(self.sock:send(bytes))
   end, function(err)
-    sock:close()
+    self.sock:close()
     ngx_log(ERR, err, "\n", traceback())
-    bucket.connections[pool] = nil
+    self.bucket.connections[self.pool] = nil
     return err
-  end, bucket, sock, bytes, fun))
+  end))
+  return opaque
+end
+
+local function request(bucket, peer, packet, fun)
+  local req = create_request(bucket, peer)
+
+  local opaque = req:send(packet)
+  local header, key, value = req:receive(opaque)
+
   return {
     header = header,
     key = key,
-    value = value
-  }
+    value = (fun and value) and fun(value) or value
+  }, req:get_unknown()
 end
 
 local function requestQ(bucket, peer, packet)
-  local sock, pool = unpack(peer)
-  local bytes = unpack(packet)
-  assert(xpcall(function()
-    sock:send(bytes)
-  end, function(err)
-    sock:close()
-    ngx_log(ERR, err, "\n", traceback())
-    bucket.connections[pool] = nil
-    return err
-  end))
-  return {}
+  local req = create_request(bucket, peer)
+  return { peer = peer, header = { opaque = req:send(packet) } }
 end
 
 local function request_until(bucket, peer, packet)
-  local sock, pool = unpack(peer)
-  local bytes, opaque = unpack(packet)
-  assert(sock:send(bytes))
+  local req = create_request(bucket, peer)
   local list = {}
-  assert(xpcall(function()
-    repeat
-      local header, key, value
-      repeat
-        header = handle_header(assert(sock:receive(24)))
-        key, value = handle_body(sock, header)
-      until header.opaque == opaque
-      if header.status_code == VBUCKET_MOVED then
-        -- update vbucket_map on next request
-        bucket.map.vbuckets, bucket.map.servers = nil, nil
-      end
-      -- cleanup internal header values
-      header.key_length, header.extras_length, header.total_length = nil, nil, nil
+
+  local opaque = req:send(packet)
+
+  repeat
+    local header, key, value = req:receive(opaque)
+    if key and value then
       tinsert(list, {
         header = header,
         key = key,
         value = value
       })
-    until not key or not value
-  end, function(err)
-    sock:close()
-    ngx_log(ERR, err, "\n", traceback())
-    bucket.connections[pool] = nil
-    return err
-  end))
+    end
+  until not key or not value
+
   return list
 end
 
@@ -343,6 +368,15 @@ local function close(self)
   self.connections = {}
 end
 
+function couchbase_session:clone()
+  return setmetatable({
+    bucket = self.bucket,
+    connections = {}
+  }, {
+    __index = couchbase_session
+  })
+end
+
 function couchbase_session:setkeepalive()
   setkeepalive(self)
 end
@@ -352,11 +386,11 @@ function couchbase_session:close()
 end
 
 function couchbase_session:noop()
-  local r = {}
+  local resp = {}
   foreach_v(self.connections, function(sock)
-    tinsert(r, request(self.bucket, sock, encode(op_code.Noop, {})))
+    tinsert(resp, request(self.bucket, sock, encode(op_code.Noop, {})))
   end)
-  return r
+  return resp
 end
 
 function couchbase_session:flush()
@@ -367,77 +401,93 @@ function couchbase_session:flushQ()
   error("Unsupported")
 end
 
+local op_extras = {
+  [op_code.Set]      = c.deadbeef,
+  [op_code.SetQ]     = c.deadbeef,
+  [op_code.Add]      = c.deadbeef,
+  [op_code.AddQ]     = c.deadbeef,
+  [op_code.Replace]  = c.deadbeef,
+  [op_code.ReplaceQ] = c.deadbeef
+}
+
 function couchbase_session:set(key, value, expire, cas)
+  assert(key and value, "key and value required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Set, {
     key = key,
     value = value,
     expire = expire or 0,
-    extras = deadbeef,
+    extras = op_extras[op_code.Set],
     cas = cas,
     vbucket_id = vbucket_id
   }))
 end
 
 function couchbase_session:setQ(key, value, expire, cas)
+  assert(key and value, "key and value required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.SetQ, {
     key = key,
     value = value,
     expire = expire or 0,
-    extras = deadbeef,
+    extras = op_extras[op_code.SetQ],
     cas = cas,
     vbucket_id = vbucket_id
   }))
 end
 
 function couchbase_session:add(key, value, expire)
+  assert(key and value, "key and value required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Add, {
     key = key,
     value = value,
     expire = expire or 0,
-    extras = deadbeef,
+    extras = op_extras[op_code.Add],
     vbucket_id = vbucket_id
   }))
 end
 
 function couchbase_session:addQ(key, value, expire)
+  assert(key and value, "key and value required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.AddQ, {
     key = key,
     value = value,
     expire = expire or 0,
-    extras = deadbeef,
+    extras = op_extras[op_code.AddQ],
     vbucket_id = vbucket_id
   }))
 end
 
 function couchbase_session:replace(key, value, expire, cas)
+  assert(key and value, "key and value required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Replace, {
     key = key,
     value = value,
     expire = expire or 0,
-    extras = deadbeef,
+    extras = op_extras[op_code.Replace],
     cas = cas,
     vbucket_id = vbucket_id
   }))
 end
 
 function couchbase_session:replaceQ(key, value, expire, cas)
+  assert(key and value, "key and value required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.ReplaceQ, {
     key = key,
     value = value,
     expire = expire or 0,
-    extras = deadbeef,
+    extras = op_extras[op_code.ReplaceQ],
     cas = cas,
     vbucket_id = vbucket_id
   }))
 end 
 
 function couchbase_session:get(key)
+  assert(key, "key required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Get, {
     key = key,
@@ -450,6 +500,7 @@ function couchbase_session:getQ(key)
 end
 
 function couchbase_session:getK(key)
+  assert(key, "key required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.GetK, {
     key = key,
@@ -462,6 +513,7 @@ function couchbase_session:getKQ(key)
 end
 
 function couchbase_session:touch(key, expire)
+  assert(key and expire, "key and expire required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Touch, {
     key = key,
@@ -471,9 +523,7 @@ function couchbase_session:touch(key, expire)
 end
 
 function couchbase_session:gat(key, expire)
-  if not expire then
-    return nil, "expire required"
-  end
+  assert(key and expire, "key and expire required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.GAT, {
     key = key,
@@ -575,9 +625,7 @@ function couchbase_session:decrementQ(key, decrement, initial, expire)
 end
 
 function couchbase_session:append(key, value, cas)
-  if not key or not value then
-    return nil, "key and value required"
-  end
+  assert(key and value, "key and value required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Append, {
     key = key,
@@ -588,9 +636,7 @@ function couchbase_session:append(key, value, cas)
 end
 
 function couchbase_session:appendQ(key, value, cas)
-  if not key or not value then
-    return nil, "key and value required"
-  end
+  assert(key and value, "key and value required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return requestQ(self.bucket, connect(self, vbucket_id), encode(op_code.AppendQ, {
     key = key,
@@ -601,9 +647,7 @@ function couchbase_session:appendQ(key, value, cas)
 end
 
 function couchbase_session:prepend(key, value, cas)
-  if not key or not value then
-    return nil, "key and value required"
-  end
+  assert(key and value, "key and value required")
   local vbucket_id = get_vbucket_id(self.bucket, key)
   return request(self.bucket, connect(self, vbucket_id), encode(op_code.Prepend, {
     key = key,
@@ -628,7 +672,8 @@ end
 
 function couchbase_session:stat(key)
   return request_until(self.bucket, connect(self), encode(op_code.Stat, {
-    key = key
+    key = key,
+    opaque = 0
   }))
 end
 
@@ -667,6 +712,107 @@ end
 
 function couchbase_session:list_buckets()
   return request(self.bucket, connect(self), encode(op_code.List_buckets, {}))
+end
+
+function couchbase_session:send(op, opts)
+  assert(op and opts and opts.key, "op_code, opts and opts.key required")
+  opts.vbucket_id = get_vbucket_id(self.bucket, opts.key)
+  opts.extras = op_extras[op]
+  local result = { requestQ(self.bucket, connect(self, opts.vbucket_id), encode(op, opts)) }
+  opts.vbucket_id, opts.extras = nil, nil
+  return unpack(result)
+end
+
+function couchbase_session:receive(peer, opts)
+  assert(peer, "peer required")
+
+  local opaque, limit = opts.opaque, opts.limit
+  local req = create_request(self.bucket, peer)
+
+  if not opaque and not limit then
+    -- wait all
+    req:sync()
+    -- return all responses
+    return req:get_unknown()
+  end
+
+  if opaque then
+    -- return response only for [opaque], other previous are ignored 
+    return req:receive(opaque)
+  end
+
+  -- return [limit] responses
+
+  req:sync(limit)
+
+  return req:get_unknown()
+end
+
+function couchbase_session:batch(b, opts)
+  local threads = {}
+  local j = 0
+
+  local unacked_window, thread_pool_size = opts.unacked_window or 10, opts.thread_pool_size or 1
+
+  local function get()
+    j = j + 1
+    return b[j]
+  end
+
+  local function thread()
+    local window = 0
+    local queue = {}
+    local session = self:clone()
+    repeat
+      local req = get()
+      if req then
+        window = window + 1
+        -- send
+        req.w = session:send(req.op, req.opts)
+        tinsert(queue, req)
+        if window == unacked_window then
+          for j=1, unacked_window / 5
+          do
+            req = tremove(queue, 1)
+            req.result = session:receive(req.w.peer, {
+              opaque = req.w.header.opaque
+            })
+            -- cleanup temporary
+            req.w = nil
+            window = window - 1
+          end
+        end
+      end
+    until not req
+    -- wait all
+    foreachi(queue, function(req)
+      req.result = session:receive(req.w.peer, {
+        opaque = req.w.header.opaque
+      })
+      req.w = nil
+    end)
+    session:setkeepalive()
+    return true
+  end
+
+  local ok, err = xpcall(function()
+    for j=1,thread_pool_size
+    do
+      local thr, err = thread_spawn(thread)
+      assert(thr, err)
+      tinsert(threads, thr)
+    end
+  end, function(err)
+    ngx_log(ERR, err, "\n", traceback())
+    return err
+  end)
+
+  -- wait all
+  foreachi(threads, function(thr)
+    thread_wait(thr)
+  end)
+
+  assert(ok, err)
 end
 
 return _M

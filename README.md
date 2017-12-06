@@ -31,6 +31,10 @@ Table of Contents
 	* [stat](#stat)
 	* [version](#version)
 	* [sasl_list](#sasl_list)
+* [Async API](#async_api)
+    * [send](#send)
+    * [receive](#receive)
+    * [batch](#receive)
 
 <!--
 * [Session API](#session_api)
@@ -307,7 +311,7 @@ Optional parameter `expire` sets the TTL for key.
 
 Couchbase not sent the response on addQ command.
 
-**return:** `{}` on success (or any valid couchbase status) or throws the error.
+**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.
 -->
 
 replace
@@ -339,7 +343,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 
 Couchbase not sent the response on replaceQ command.
 
-**return:** `{}` on success (or any valid couchbase status) or throws the error.
+**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.
 -->
 
 get
@@ -413,7 +417,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 
 Couchbase not sent the response on deleteQ command.
 
-**return:** `{}` on success (or any valid couchbase status) or throws the error.
+**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.
 -->
 
 increment
@@ -447,7 +451,7 @@ Optional parameter `expire` sets the TTL for key.
 
 Couchbase not sent the response on incrementQ command.
 
-**return:** `{}` on success (or any valid couchbase status) or throws the error. Returns the next value.  
+**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error. Returns the next value.  
 Status MUST be retrieved from the header.
 -->
 
@@ -482,7 +486,7 @@ Optional parameter `expire` sets the TTL for key.
 
 Couchbase not sent the response on decrementQ command.
 
-**return:** `{}` on success (or any valid couchbase status) or throws the error.  
+**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.  
 Returns the next value.  
 Status MUST be retrieved from the header.
 -->
@@ -513,7 +517,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 
 Couchbase not sent the response on appendQ command.
 
-**return:** `{}` on success (or any valid couchbase status) or throws the error.
+**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.
 -->
 
 prepend
@@ -542,7 +546,7 @@ Optional parameter `cas` must be a CAS value from the `get()` method.
 
 Couchbase not sent the response on prependQ command.
 
-**return:** `{}` on success (or any valid couchbase status) or throws the error.
+**return:** `{"header":{"opaque":2142342}}` on success (or any valid couchbase status) or throws the error.
 -->
 
 stat
@@ -576,3 +580,164 @@ sasl_list
 Get available sasl methods.
 
 **return:** `{"header":{"opaque":0,"CAS":[0,0,0,0,0,0,0,0],"status_code":0,"status":"No error","type":0},"value":"CRAM-MD5 PLAIN"}` on success (or any valid couchbase status) or throws the error.
+
+<a name="async_api"></a>
+Async API
+=========
+send
+----
+**syntax:** `session:send(op, opts)`
+
+**context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
+
+Send request to couchbase .
+
+Parameters `op` must be a constant.
+
+**Example 1:**
+```
+  local c = require "resty.couchbase.consts"
+
+  ...
+
+  local w = session:send(c.op_code.Set, {
+    key = 88, value = 1234567890
+  })
+
+  local l = session:receive(w.peer, {
+    opaque = w.header.opaque
+  })
+
+  ...
+```
+
+**Example 2:**
+```
+  local c = require "resty.couchbase.consts"
+
+  ...
+
+  local batch = {
+    { 77, "1234567890" },
+    { 88, "1234567890" },
+    { 99, "1234567890" }
+  }
+
+  local peers = {}
+  local opaques = {}
+
+  for _,req in ipairs(batch)
+  do
+    local key, value = unpack(req)
+    local w = session:send(c.op_code.SetQ, {
+      key = key, value = value
+    })
+    local peer, opaque = w.peer, w.header.opaque
+    peers[peer] = true
+    opaques[opaque] = req
+  end
+
+  -- wait responses (only errors)
+
+  for peer in pairs(peers)
+  do
+    local fails = session:receive(w.peer)
+    for _,fail in ipairs(fails)
+    do
+      local header, key, value = fail.header, fail.key, fail.value
+      local request = opaques[header.opaque]
+      opaques[header.opaque] = {
+        header = header, key = key, value = value, request = request
+      }
+    end
+  end
+
+  ...
+```
+
+**return:** `{"header":{"opaque":0}}` on success or throws the error.
+
+receive
+-------
+**syntax:** `session:receive(peer, opts)`
+
+**context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
+
+Receive responses from couchbase.
+
+Parameters `ops` is optional.
+
+`opts` is a table:
+* opaque - got from `send`.
+* limit - limit number of received messages.
+
+[Examples](#send)
+
+**return:**
+```
+{
+  {"header":{"opaque":23234234,"CAS":[0,234,134,218,216,1,160,113],"status_code":0,"status":"No error","type":0},"value":"1312"},
+  {"header":{"opaque":56756756,"CAS":[0,222,132,248,116,1,112,212],"status_code":0,"status":"No error","type":0},"value":"1231"},
+  {"header":{"opaque":24234234,"CAS":[0,121,142,278,16,12,196,211],"status_code":0,"status":"No error","type":0},"value":"4222"}
+}
+```
+
+```
+{
+  {"header":{"opaque":23234234,"CAS":[0,234,134,218,216,1,160,113],"status_code":1,"status":"Key not found","type":0},"value":"Key not found"},
+  {"header":{"opaque":56756756,"CAS":[0,222,132,248,116,1,112,212],"status_code":1,"status":"Key not found","type":0},"value":"Key not found"},
+  {"header":{"opaque":24234234,"CAS":[0,121,142,278,16,12,196,211],"status_code":1,"status":"Key not found","type":0},"value":"Key not found"}
+}
+```
+
+on success or throws the error.
+
+batch
+-----
+**syntax:** `session:batch(b, opts)`
+
+**context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
+
+Batch request to couchbase.
+
+Parameter `b` is a table with single requests.
+
+Parameters `ops` is optional.
+
+`opts` is a table:
+* unacked_window - unacknowledged request/response window.
+* thread_pool_size - number of concurent threads.
+
+**Example:**
+```
+  local b = {
+    { op = c.op_code.Set, opts = { key = 1, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 2, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 3, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 4, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 5, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 6, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 7, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 8, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 10, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 11, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 12, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 13, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 14, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 15, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 16, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 17, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 18, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 19, value = "1234567890" },
+    { op = c.op_code.Set, opts = { key = 20, value = "1234567890" }
+  }
+
+  session:batch(b, {
+    unacked_window = 2,
+    thread_pool_size = 4
+  })
+```
+
+Updates every item in  `b` table with `result` field.
+
+**return:** none or throws the error.
