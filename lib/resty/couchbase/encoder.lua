@@ -168,6 +168,11 @@ function _M.handle_body(sock, header)
   local key    = body:sub(1 + header.extras_length, header.extras_length + header.key_length)
   local value  = body:sub(1 + header.extras_length + header.key_length)
 
+  -- cleanup protocol fields
+  header.key_length = nil
+  header.extras_length = nil
+  header.total_length = nil
+
   return #key ~= 0 and key or nil,
          #value ~= 0 and value or nil,
          #extras ~= 0 and extras or nil

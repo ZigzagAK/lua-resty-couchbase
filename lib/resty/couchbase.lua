@@ -91,9 +91,20 @@ function request_class:get_unknown()
   return self.unknown
 end
 
+function request_class:try(fun)
+  assert(xpcall(function()
+    fun()
+  end, function(err)
+    self.sock:close()
+    ngx_log(ERR, err, "\n", traceback())
+    self.bucket.connections[self.pool] = nil
+    return err
+  end))
+end
+
 function request_class:receive(opaque, limit)
   local header, key, value
-  assert(xpcall(function()
+  self:try(function()
     local j, incr = 0, limit and 1 or 0
     while j < (limit or 1)
     do
@@ -104,22 +115,15 @@ function request_class:receive(opaque, limit)
         self.bucket.map.vbuckets, self.bucket.map.servers = nil, nil
         error(header.status)
       end
-      -- cleanup internal header values
-      header.key_length, header.extras_length, header.total_length =  nil, nil, nil
-      if opaque and header.opaque ~= opaque then
+      if opaque then
+        if opaque == header.opaque then
+          return
+        end
         self.unknown[header.opaque] = { header = header, key = key, value = value }
-      end
-      if opaque and header.opaque == opaque then
-        break
       end
       j = j + incr
     end
-  end, function(err)
-    self.sock:close()
-    ngx_log(ERR, err, "\n", traceback())
-    self.bucket.connections[self.pool] = nil
-    return err
-  end))
+  end)
   return header, key, value
 end
 
@@ -129,14 +133,9 @@ end
 
 function request_class:send(packet)
   local bytes, opaque = unpack(packet)
-  assert(xpcall(function()
+  self:try(function()
     assert(self.sock:send(bytes))
-  end, function(err)
-    self.sock:close()
-    ngx_log(ERR, err, "\n", traceback())
-    self.bucket.connections[self.pool] = nil
-    return err
-  end))
+  end)
   return opaque
 end
 
