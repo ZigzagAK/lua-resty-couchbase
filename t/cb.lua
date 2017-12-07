@@ -306,5 +306,58 @@ function _M.batch_gen(n)
   return ngx.now() - s
 end
 
+function _M.batch_genQ(s,n)
+  local c = require "resty.couchbase.consts"
+  local cb = bucket:session()
+  local body = {}
 
+  local s = ngx.now()
+
+  local peers = {}
+  for i=s,s+n
+  do
+    local w = cb:setQ(i, [[
+{
+   "meta":{
+      "id":"u1111",
+      "tp":"u",
+      "v":1,
+      "mdf":1511081964
+   },
+   "aId":1111,
+   "login":"Test",
+   "pwd":"password",
+   "pwdExp":123456,
+   "pwdTp":123,
+   "lng":123,
+   "usrTp":123,
+   "crDate":123456,
+   "lockTp":123456,
+   "lockUntil":123456,
+   "creds":[
+      {
+         "val":"Admin",
+         "tpId":250300001
+      }
+   ],
+   "dep":"department_one",
+   "depId":999,
+   "lngIana":"ru",
+   "asppId":1
+}]])
+    local sock, pool = unpack(w.peer)
+    peers[pool] = w.peer
+  end
+
+  -- wait responses (only errors)
+
+  for pool, peer in pairs(peers)
+  do
+    cb:receive(peer)
+  end
+  
+  ngx.update_time()
+  return ngx.now() - s
+ end
+  
 return _M
