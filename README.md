@@ -266,8 +266,8 @@ Couchbase not sent the response on setQ command.
   for i=1,n
   do
     local w = session:setQ(key, "xxxxxxxxxxxxxxx")
-    local peer, opaque = w.peer, w.header.opaque
-    peers[peer] = true
+    local sock, pool = unpack(w.peer)
+    peers[pool] = w.peer
   end
 
   -- wait responses (only errors)

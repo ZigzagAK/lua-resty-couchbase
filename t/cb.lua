@@ -222,75 +222,8 @@ function _M.batch_gen(n)
    "dep":"department_one",
    "depId":999,
    "lngIana":"ru",
-   "asppId":1,
-   "ipMask":[
- 
-   ],
-   "nvUsr":2222222,
-   "nvDate":12345678,
-   "attrs":[
-      {
-         "name":"ATTR_TEST_DEP",
-         "val":"test_one_dep",
-         "dep":"department_one",
-         "pub":false,
-         "desc":""
-      },
-      {
-         "name":"DISPL_NAME",
-         "val":"Test User",
-         "dep":"undefined",
-         "pub":true,
-         "desc":"Display name"
-      },
-      {
-         "name":"INT_ATTR",
-         "val":123456,
-         "dep":"undefined",
-         "pub":true,
-         "desc":""
-      },
-      {
-         "name":"PROXY_NUMBER",
-         "val":"123\\123123",
-         "dep":"undefined",
-         "pub":false,
-         "desc":"Proxy number"
-      }
-   ],
-   "prepAttrs":[
-      {
-         "dep":"Local",
-         "name":"ATTR_TEST_DEP",
-         "val":"test_one_dep"
-      },
-      {
-         "dep":"Local",
-         "name":"DISPL_NAME",
-         "val":"Test User"
-      },
-      {
-         "dep":"Local",
-         "name":"INT_ATTR",
-         "val":123456
-      },
-      {
-         "dep":"Local",
-         "name":"PROXY_NUMBER",
-         "val":"123\\123123"
-      }
-   ],
-   "prepAttrsEsc":[
-      {
-         "dep":"Local",
-         "name":"PROXY_NUMBER",
-         "val":"123\\\\123123"
-      }
-   ],
-   "mvno":"mvno",
-   "notifHead":"idtest"
-}
-      ]]
+   "asppId":1
+}]]
     }
     body[i] = {
       op = c.op_code.Set,
