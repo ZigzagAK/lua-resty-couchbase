@@ -1,3 +1,5 @@
+--- @module Couchbase
+
 local _M = {
   _VERSION = '0.1-alpha'
 }
@@ -21,7 +23,6 @@ local xpcall = xpcall
 local traceback = debug.traceback
 local thread_spawn, thread_wait = ngx.thread.spawn, ngx.thread.wait
 local unpack = unpack
-local tostring = tostring
 local rshift, band = bit.rshift, bit.band
 local random = math.random
 local ngx_log = ngx.log
@@ -37,7 +38,6 @@ local defaults = {
 
 -- consts
 
-local MAGIC = c.magic
 local op_code = c.op_code
 local status = c.status
 
@@ -47,11 +47,9 @@ local encode = encoder.encode
 local handle_header = encoder.handle_header
 local handle_body = encoder.handle_body
 local put_i8 = encoder.put_i8
-local put_i16 = encoder.put_i16
 local put_i32 = encoder.put_i32
 local put_i32 = encoder.put_i32
 local get_i32 = encoder.get_i32
-local pack_bytes = encoder.pack_bytes
 
 -- helpers
 
@@ -67,16 +65,23 @@ local zero_4 = encoder.pack_bytes(4, 0, 0, 0, 0)
 
 -- class tables
 
+--- @type CouchbaseCluster
 local couchbase_cluster = {}
+--- @type CouchbaseBucket
+--  @field #CouchbaseCluster cluster
 local couchbase_bucket = {}
+--- @type CouchbaseSession
+--  @field #CouchbaseBucket bucket
 local couchbase_session = {}
 
 -- request
 
 local VBUCKET_MOVED = status.VBUCKET_MOVED
 
+--- @type Request
 local request_class = {}
 
+--- @return #Request
 local function create_request(bucket, peer)
   local sock, pool = unpack(peer)
   return setmetatable({
@@ -266,6 +271,8 @@ end
 
 -- cluster class
 
+--- @return #CouchbaseCluster
+--  @param #table opts
 function _M.cluster(opts)
   opts = opts or {}
 
@@ -281,6 +288,8 @@ function _M.cluster(opts)
   })
 end
 
+--- @return #CouchbaseBucket
+--  @param #CouchbaseCluster self
 function couchbase_cluster:bucket(opts)
   opts = opts or {}
 
@@ -304,6 +313,8 @@ end
 
 -- bucket class
 
+--- @return #CouchbaseSession
+--  @param #CouchbaseBucket self
 function couchbase_bucket:session()
   return setmetatable({
     bucket = self,
