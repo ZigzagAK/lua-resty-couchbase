@@ -1,7 +1,7 @@
 --- @module Couchbase
 
 local _M = {
-  _VERSION = '0.1-alpha'
+  _VERSION = '0.1.1-alpha'
 }
 
 local cjson = require "cjson"
@@ -334,9 +334,10 @@ local function auth_sasl(peer, bucket)
     key = "PLAIN",
     value = put_i8(0) .. bucket.name .. put_i8(0) ..  bucket.password
   }))
-  if auth_resp.value ~= "Authenticated" then
+  if not auth_resp.header or auth_resp.header.status_code ~= status.NO_ERROR then
     peer[1]:close()
-    error("Not authenticated")
+    local err = auth_resp.header.status or c.status_desc[status.AUTH_ERROR]
+    error("Not authenticated: " .. err)
   end
 end
 
