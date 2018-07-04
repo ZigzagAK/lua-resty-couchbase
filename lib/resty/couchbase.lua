@@ -1,7 +1,7 @@
 --- @module Couchbase
 
 local _M = {
-  _VERSION = '0.1.1-alpha'
+  _VERSION = '0.2.0-alpha'
 }
 
 local cjson = require "cjson"
@@ -27,10 +27,12 @@ local rshift, band = bit.rshift, bit.band
 local random = math.random
 local ngx_log = ngx.log
 local DEBUG, ERR = ngx.DEBUG, ngx.ERR
-local HTTP_OK = ngx.HTTP_OK
+local HTTP_OK, HTTP_BAD_REQUEST, HTTP_NOT_FOUND = ngx.HTTP_OK, ngx.HTTP_BAD_REQUEST, ngx.HTTP_NOT_FOUND
+local null = ngx.null
 
 local defaults = {
   port = 8091,
+  n1ql = 8093,
   timeout = 30000,
   pool_idle = 10,
   pool_size = 10
@@ -52,6 +54,10 @@ local put_i32 = encoder.put_i32
 local get_i32 = encoder.get_i32
 
 -- helpers
+
+local function foreach(tab, f)
+  for k,v in pairs(tab) do f(k,v) end
+end
 
 local function foreach_v(tab, f)
   for _,v in pairs(tab) do f(v) end
@@ -184,7 +190,7 @@ end
 
 -- helpers
 
-local function fetch_vbuckets(bucket)
+local function fetch_url(bucket, url, cb)
   local cluster = bucket.cluster
 
   local httpc = http.new()
@@ -198,7 +204,7 @@ local function fetch_vbuckets(bucket)
   end
 
   local resp = assert(httpc:request {
-    path = "/pools/default/buckets/" .. bucket.name,
+    path = url,
     headers = {
       Authorization = "Basic " .. encode_base64(cluster.user .. ":" .. cluster.password),
       Accept = "application/json",
@@ -212,50 +218,82 @@ local function fetch_vbuckets(bucket)
 
   httpc:set_keepalive(10000, 10)
 
-  local json = assert(json_decode(body))
+  return cb(assert(json_decode(body)))
+end
 
-  assert(json.vBucketServerMap,              "vBucketServerMap is not found")
-  assert(json.vBucketServerMap.vBucketMap,   "vBucketMap is not found")
-  assert(json.vBucketServerMap.serverList,   "serverList is not found")
-  assert(json.nodes and #json.nodes ~= 0,    "nodes array is not found or empty")
+local function fetch_n1ql_peers(bucket)
+  return fetch_url(bucket, "/pools/default", function(json)
+    assert(json.nodes and #json.nodes ~= 0, "nodes array is not found or empty")
 
-  local ports = {}
+    local n1ql = {}
 
-  for j, node in ipairs(json.nodes)
-  do
-    assert(node.hostname,      "nodes[" .. j .. "].hostname is not found")
-    assert(node.ports,         "nodes[" .. j .. "].ports is not found")
-    assert(node.ports.direct,  "nodes[" .. j .. "].ports.direct is not found")
-    assert(node.ports.proxy,   "nodes[" .. j .. "].ports.proxy is not found")
-    local hostname = node.hostname:match("^(.+):%d+$")
-    assert(hostname,           "nodes[" .. j .. "].hostname can't parse")
-    ports[hostname] = { node.ports.direct, node.ports.proxy }
-  end
+    for j, node in ipairs(json.nodes)
+    do
+      assert(node.hostname, "nodes[" .. j .. "].hostname is not found")
+      local hostname = node.hostname:match("^(.+):%d+$")
+      assert(hostname,      "nodes[" .. j .. "].hostname can't parse")
+      foreachi(node.services or {}, function(service)
+        if service == "n1ql" then
+          tinsert(n1ql, hostname)
+        end
+      end)
+    end
 
-  for j, server in ipairs(json.vBucketServerMap.serverList)
-  do
-    local hostname = server:match("^(.+):%d+$")
-    assert(hostname,    "serverList[" .. j .. "]=" .. server .. " can't parse")
-    local node_ports = ports[hostname]
-    assert(node_ports,  "serverList[" .. j .. "]=" .. server .. " node is not found")
-    local direct_port, proxy_port = unpack(node_ports)
-    json.vBucketServerMap.serverList[j] = { hostname, bucket.VBUCKETAWARE and direct_port or proxy_port }
-  end
+    return n1ql
+  end)
+end
 
-  return json.vBucketServerMap.vBucketMap, json.vBucketServerMap.serverList
+local function fetch_vbuckets(bucket)
+  return fetch_url(bucket, "/pools/default/buckets/" .. bucket.name, function(json)
+    assert(json.vBucketServerMap,              "vBucketServerMap is not found")
+    assert(json.vBucketServerMap.vBucketMap,   "vBucketMap is not found")
+    assert(json.vBucketServerMap.serverList,   "serverList is not found")
+    assert(json.nodes and #json.nodes ~= 0,    "nodes array is not found or empty")
+
+    local ports = {}
+
+    for j, node in ipairs(json.nodes)
+    do
+      assert(node.hostname,      "nodes[" .. j .. "].hostname is not found")
+      assert(node.ports,         "nodes[" .. j .. "].ports is not found")
+      assert(node.ports.direct,  "nodes[" .. j .. "].ports.direct is not found")
+      assert(node.ports.proxy,   "nodes[" .. j .. "].ports.proxy is not found")
+      local hostname = node.hostname:match("^(.+):%d+$")
+      assert(hostname,           "nodes[" .. j .. "].hostname can't parse")
+      ports[hostname] = { node.ports.direct, node.ports.proxy }
+    end
+
+    for j, server in ipairs(json.vBucketServerMap.serverList)
+    do
+      local hostname = server:match("^(.+):%d+$")
+      assert(hostname,    "serverList[" .. j .. "]=" .. server .. " can't parse")
+      local node_ports = ports[hostname]
+      assert(node_ports,  "serverList[" .. j .. "]=" .. server .. " node is not found")
+      local direct_port, proxy_port = unpack(node_ports)
+      json.vBucketServerMap.serverList[j] = { hostname, bucket.VBUCKETAWARE and direct_port or proxy_port }
+    end
+
+    return json.vBucketServerMap.vBucketMap, json.vBucketServerMap.serverList
+  end)
 end
 
 local function update_vbucket_map(bucket)
   if not bucket.map.vbuckets then
     bucket.map.vbuckets, bucket.map.servers = fetch_vbuckets(bucket)
+    bucket.n1ql = fetch_n1ql_peers(bucket)
     ngx_log(DEBUG, "update vbucket [", bucket.name, "] VBUCKETAWARE=", (bucket.VBUCKETAWARE and "true" or "false"),
-                   " servers=", json_encode(bucket.map.servers))
+                   " servers=", json_encode(bucket.map.servers), " n1ql=", json_encode(bucket.n1ql))
   end
 end
 
 local function get_vbucket_id(bucket, key)
   update_vbucket_map(bucket)
   return bucket.VBUCKETAWARE and band(rshift(crc32(key), 16), #bucket.map.vbuckets - 1) or nil
+end
+
+local function get_query_peer(bucket)
+  update_vbucket_map(bucket)
+  return #bucket.n1ql ~= 0 and bucket.n1ql[random(1, #bucket.n1ql)] or nil
 end
 
 local function get_vbucket_peer(bucket, vbucket_id)
@@ -299,6 +337,12 @@ function couchbase_cluster:bucket(opts)
   opts.timeout = opts.timeout or defaults.timeout
   opts.pool_idle = opts.pool_idle or defaults.pool_idle
   opts.pool_size = opts.pool_size or defaults.pool_size
+  opts.n1ql_port = opts.n1ql_port or defaults.n1ql
+  opts.n1ql_timeout = opts.n1ql_timeout or 10000
+  if opts.password then
+    opts.n1ql_auth = "Basic " .. encode_base64(opts.name .. ":" ..  opts.password)
+  end
+  opts.n1ql = {}
 
   opts.map = self.buckets[opts.name]
   if not opts.map then
@@ -826,6 +870,68 @@ function couchbase_session:batch(b, opts)
   end)
 
   assert(ok, err)
+end
+
+local function encode_args(args)
+  local tab = {}
+  foreach(args, function(k,v)
+    if type(v) == "string" then
+      v = "\"" ..  v .. "\""
+    end
+    tinsert(tab, k .. "=" .. v)
+  end)
+  return tconcat(tab, "&")
+end
+
+function couchbase_session:query(statement, args, timeout)
+  local peer = assert(get_query_peer(self.bucket), "no n1ql peer")
+
+  local httpc = http.new()
+
+  httpc:set_timeout(self.bucket.n1ql_timeout)
+
+  assert(httpc:connect(peer, self.bucket.n1ql_port))
+
+  local query = { "statement=" .. statement }
+  if args then
+    if #args ~= 0 then
+      -- positioned
+      tinsert(query, "args=" .. json_encode(args))
+    else
+      -- named
+      tinsert(query, encode_args(args))
+    end
+  end
+  timeout = timeout or self.bucket.n1ql_timeout
+  tinsert(query, "timeout=" .. timeout .. "ms")
+
+  query = tconcat(query, "&")
+
+  ngx_log(DEBUG, "query [", self.bucket.name, "] ", query)
+
+  local resp = assert(httpc:request {
+    path = "/query/service",
+    method = "POST",
+    headers = {
+      Authorization = self.bucket.n1ql_auth,
+      Host = peer .. ":" .. self.bucket.n1ql_port,
+      ["Content-Type"] = "application/x-www-form-urlencoded"
+    },
+    body = query
+  })
+
+  local status = resp.status
+  local body = assert(resp:read_body())
+
+  body = json_decode(body)
+
+  httpc:set_keepalive(self.bucket.pool_idle * 1000, self.bucket.pool_size)
+
+  if status >= HTTP_BAD_REQUEST then
+    return nil, body.errors
+  end
+
+  return body.metrics.resultCount ~= 0 and body.results or null
 end
 
 return _M

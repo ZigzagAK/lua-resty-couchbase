@@ -42,6 +42,7 @@ Table of Contents
     * [send](#send)
     * [receive](#receive)
     * [batch](#receive)
+* [N1QL](#n1ql)
 
 Status
 =====
@@ -722,3 +723,11 @@ Parameters `ops` is optional.
 Updates every item in  `b` table with `result` field.
 
 **return:** none or throws the error.
+
+N1QL
+----
+**syntax:** `session:query(statement, args, timeout_ms)`
+
+**context:** rewrite_by_lua, access_by_lua, content_by_lua, timer
+
+N1QL query.
