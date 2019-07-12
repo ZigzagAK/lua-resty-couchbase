@@ -1,5 +1,5 @@
 local _M = {
-  _VERSION = '0.1-alpha'
+  _VERSION = '1.0.0'
 }
 
 _M.op_code = {

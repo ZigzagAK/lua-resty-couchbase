@@ -1,7 +1,7 @@
 --- @module Couchbase
 
 local _M = {
-  _VERSION = '0.2.0-alpha'
+  _VERSION = '1.0.0'
 }
 
 local cjson = require "cjson"
@@ -212,7 +212,16 @@ local function fetch_url(bucket, url, cb)
     }
   })
 
-  assert(resp.status == HTTP_OK, "Unauthorized")
+  assert(resp.status ~= ngx.HTTP_BAD_GATEWAY, "Connection failed")
+  assert(resp.status ~= ngx.HTTP_GATEWAY_TIMEOUT, "Connection timeout")
+  assert(resp.status ~= ngx.HTTP_INTERNAL_SERVER_ERROR, "Internal server error")
+  assert(resp.status ~= ngx.HTTP_UNAUTHORIZED, "Unauthorized")
+  assert(resp.status ~= ngx.HTTP_FORBIDDEN, "Forbidden")
+  assert(resp.status ~= ngx.HTTP_BAD_REQUEST, "Bad request")
+  assert(resp.status ~= ngx.HTTP_NOT_FOUND, "Resource not found")
+
+  -- Checking for other errors
+  assert(resp.status == HTTP_OK, "Status=" .. (resp.status or ngx.HTTP_SERVICE_UNAVAILABLE))
 
   local body = assert(resp:read_body())
 
