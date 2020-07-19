@@ -266,7 +266,7 @@ local function fetch_vbuckets(bucket)
       assert(node.hostname,      "nodes[" .. j .. "].hostname is not found")
       assert(node.ports,         "nodes[" .. j .. "].ports is not found")
       assert(node.ports.direct,  "nodes[" .. j .. "].ports.direct is not found")
-      assert(node.ports.proxy,   "nodes[" .. j .. "].ports.proxy is not found")
+      assert(bucket.VBUCKETAWARE or node.ports.proxy, "nodes[" .. j .. "].ports.proxy is not found")
       local hostname = node.hostname:match("^(.+):%d+$")
       assert(hostname,           "nodes[" .. j .. "].hostname can't parse")
       ports[hostname] = { node.ports.direct, node.ports.proxy }
