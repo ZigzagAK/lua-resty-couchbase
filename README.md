@@ -47,7 +47,7 @@ Table of Contents
 Status
 =====
 
-Under development.
+Production ready.
 
 Synopsis
 =======
